@@ -1,0 +1,267 @@
+<?php
+
+/**
+ * JS module for Selectize.js
+ * http://selectize.github.io/selectize.js/
+ */
+
+class FontAwesomePro extends ModuleJS implements ConfigurableModule {
+
+    public static function getModuleInfo() {
+        return array(
+            'title' 	=> 'Font Awesome Pro',
+            'version' 	=> 100,
+            'summary' 	=> 'Provides FontAwesome Pro css files for use in admin.',
+            'href' 		=> 'http://fontawesome.io/',
+            'autoload' 	=> 'template=admin',
+          );
+    }
+
+
+    protected static $configDefaults = array(
+    	'loadOption'  => [],
+    	'loadStyle'   => 'solid',
+        'loadBrands'  => 0,
+        'removeFA'    => 0,
+        'disableThis' => 0,
+    );
+
+
+    /**
+     * Data as used by the get/set functions
+     *
+     */
+    protected $data = array();
+
+
+    /**
+     * __construct() is the right place to init config vars before they'll get populated
+     *
+     */
+    public function __construct() {
+        foreach(self::$configDefaults as $key => $value) {
+            $this->set($key, $value);
+        }
+    }
+
+
+    /**
+     * Per the Module interface, Initialize the Process, loading any related CSS or JS files
+     *
+     */
+    public function init() {
+        parent::init();
+    }
+
+    /**
+     * Per the Module interface, Initialize the Process, loading any related CSS or JS files
+     *
+     */
+    public function ready() {
+
+        $name = $this->classname();
+        $info = $this->getModuleInfo();
+        $version = (int) $info['version'];
+
+        if($this->data['disableThis']) return;
+
+        if($this->data['loadOption'] == 'webfonts') {
+            $this->loadWebfonts();
+        }
+
+        if($this->data['loadOption'] == 'svg-framework') {
+            $this->loadSVGFramework();
+        }
+
+        /**
+         * getHeadJS
+         * getBrowserTitle()
+         */
+        if($this->data['removeFA']) {
+
+            //  reno & default: hook before getExtraMarkup
+            if($this->user->admin_theme != 'AdminThemeUikit') {
+                $this->addHookBefore('AdminTheme::getExtraMarkup', $this, 'removeFontAwesome');
+            }
+
+            if($this->user->admin_theme == 'AdminThemeUikit') {
+                $this->addHookAfter('Page::render', $this, 'nullifyCoreFA', array('priority'=>1000));
+            }
+
+        } else {
+
+            if($this->user->admin_theme != 'AdminThemeUikit') {
+                $this->addHookBefore('AdminTheme::getExtraMarkup', $this, 'prependFontAwesome');
+            }
+
+            if($this->user->admin_theme == 'AdminThemeUikit') {
+                $this->config->styles->prepend($this->config->urls->$name . "legacy/css/font-awesome.min.css?v=$version");
+                $this->addHookAfter('Page::render', $this, 'nullifyCoreFA', array('priority'=>1000));
+            }
+        }
+
+    }
+
+
+    public function loadWebfonts() {
+
+        $name = $this->classname();
+        $info = $this->getModuleInfo();
+        $version = (int) $info['version'];
+
+        // core CSS, required
+        $this->config->styles->add($this->config->urls->$name . "vendor/css/fontawesome-pro-core.css?v=$version");
+
+        // Icon Style (regular, solid, light)
+        $loadStyle = $this->data['loadStyle'];
+        //$this->config->styles->add($this->config->urls->$name . "vendor/css/fontawesome-pro-{$loadStyle}.css?v=$version");
+        // custom css file override font family name to make it work for admin theme
+        // if regular is not selected, load it first for fallback to brands
+        if($this->data['loadStyle'] != 'regular') {
+            $this->config->styles->add($this->config->urls->$name . "FontAwesomePro_regular.css?v=$version");
+        }
+        $this->config->styles->add($this->config->urls->$name . "FontAwesomePro_{$loadStyle}.css?v=$version");
+
+        if($this->data['loadBrands']) {
+            $this->config->styles->add($this->config->urls->$name . "vendor/css/fontawesome-pro-brands.css?v=$version");
+        }
+
+
+    }
+
+    /**
+     * Currently this only works with the solid icons; base files need to be loaded before pack files
+     * @return [type] [description]
+     */
+    public function loadSVGFramework() {
+        $name = $this->classname();
+        $info = $this->getModuleInfo();
+        $version = (int) $info['version'];
+        $min = $this->config->debug ? '' : '.min';
+
+        //$this->config->scripts->add($this->config->urls->$name . "vendor/js/bundles/everything{$min}.js?v=$version");
+
+        //$loadStyle = $this->data['loadStyle'];
+        //$this->config->scripts->add($this->config->urls->$name . "vendor/js/packs/{$loadStyle}{$min}.js?v=$version");
+
+        $this->config->scripts->add($this->config->urls->$name . "vendor/js/v4-shims{$min}.js?v=$version");
+        $this->config->scripts->add($this->config->urls->$name . "vendor/js/fontawesome{$min}.js?v=$version");
+
+        //$this->config->scripts->add($this->config->urls->$name . "vendor/js/packs/regular{$min}.js?v=$version");
+        //$this->config->scripts->add($this->config->urls->$name . "vendor/js/packs/light{$min}.js?v=$version");
+        $this->config->scripts->add($this->config->urls->$name . "vendor/js/packs/solid{$min}.js?v=$version");
+
+        if($this->data['loadBrands']) {
+            $this->config->scripts->add($this->config->urls->$name . "vendor/js/packs/brands{$min}.js?v=$version");
+        }
+
+    }
+
+    public function removeFontAwesome() {
+    	$styles = $this->config->styles;
+    	foreach($styles as $key => $value) {
+    		if(strpos($value, 'font-awesome') !== false) {
+    			$styles->remove($value);
+    		}
+    	}
+    }
+
+    public function prependFontAwesome() {
+    	$styles = $this->config->styles;
+    	foreach($styles as $key => $value) {
+    		if(strpos($value, 'font-awesome') !== false) {
+    			$styles->remove($value);
+    			$styles->prepend($value);
+    		}
+    	}
+    }
+
+    /**
+     * super hacky
+     */
+    public function nullifyCoreFA($event) {
+        $name = $this->classname();
+        $modRoot = $this->config->urls->$name;
+        $root = $this->config->urls->root;
+        if($root !== '/') {
+            $modRoot = str_replace($root,'/',$modRoot);
+        }
+        $dummyFile = $modRoot . 'font-awesome-dummy.css';
+        $search = '/wire/templates-admin/styles/font-awesome/css/font-awesome.min.css';
+        $replace = $dummyFile;
+        $event->return = str_replace($search,$replace,$event->return);
+    }
+
+
+
+    /**
+     * Return an InputfieldsWrapper of Inputfields used to configure the class
+     *
+     * @param array $data Array of config values indexed by field name
+     * @return InputfieldsWrapper
+     *
+     */
+    public function getModuleConfigInputfields(array $data) {
+
+		// foreach(self::$configDefaults as $key => $value) {
+		// 	if(!isset($data[$key])||$data[$key]=="") $data[$key] = $value;
+		// }
+		unset($data['cacheClear']);
+
+        $wrapper = new InputFieldWrapper();
+
+        //-------------------------------------------
+        $f = wire('modules')->get("InputfieldSelect");
+        $f->attr('name', 'loadOption');
+        $f->label = "Load Options";
+        $f->attr('value', (isset($data['loadOption']) ? $data['loadOption'] : 0));
+        $f->addOption('webfonts', 'Web Fonts');
+        $f->addOption('svg-framework', 'SVG Framework');
+        $wrapper->add($f);
+
+        //-------------------------------------------
+        $f = wire('modules')->get("InputfieldSelect");
+        $f->attr('name+id', 'loadStyle');
+        $f->label = "Select Font Style";
+        $f->attr('value', (isset($data['loadStyle']) ? $data['loadStyle'] : ''));
+        $f->addOption('regular', 'Regular');
+        $f->addOption('solid', 'Solid');
+        $f->addOption('light', 'Light');
+        $wrapper->add($f);
+
+        // ------------------------------------------------------------------------
+        $f = wire('modules')->get('InputfieldCheckbox'); 
+        $f->attr('name', 'loadBrands');
+        $f->attr('value', 1);
+        if($data['loadBrands']) $f->attr('checked', 'checked'); 
+        $f->label = __('Load Brands Font (optional)'); 
+        $wrapper->add($f);
+
+
+        // ------------------------------------------------------------------------
+        $f = wire('modules')->get('InputfieldCheckbox'); 
+        $f->attr('name', 'removeFA');
+        $f->attr('value', 1);
+        if($data['removeFA']) $f->attr('checked', 'checked'); 
+        $f->label = __('Remove Core Font Awesome (recommended only for custom Admin Themes)'); 
+        $f->columnWidth = 50;
+        $wrapper->add($f);
+
+        // ------------------------------------------------------------------------
+        $f = wire('modules')->get('InputfieldCheckbox');
+        $f->attr('name', 'disableThis');
+        $f->attr('value', 1);
+        if($data['disableThis']) $f->attr('checked', 'checked');
+        $f->label = __('Disable Loading (instead of uninstall, this prevents Pro from loading.)');
+        $wrapper->add($f);
+
+
+        return $wrapper;
+
+
+    }
+
+
+
+}
+
