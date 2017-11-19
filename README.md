@@ -11,7 +11,3 @@ Instructions:
 
 4) Install the module and select which style to use, webfonts or svg-framework.
 
-Limitations:
-
-The module cannot override the fonts in AdminThemeUIKit. That Admin theme will require modification or some method that it calls needs to be made hookable.
-
