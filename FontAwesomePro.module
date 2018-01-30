@@ -10,7 +10,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title' 	=> 'Font Awesome Pro',
-			'version' 	=> 101,
+			'version' 	=> 102,
 			'summary' 	=> 'Provides FontAwesome Pro css files for use in admin.',
 			'href' 		=> 'http://fontawesome.io/',
 			'autoload' 	=> 'template=admin',
@@ -98,7 +98,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		$parts = $event->return;
 
 		$styles = array(
-			$this->config->urls->$name . "vendor/css/fontawesome-pro-core.css?v=$version",
+			$this->config->urls->$name . "vendor/css/fontawesome.css?v=$version",
 		);
 
 		// Icon Style (regular, solid, light)
@@ -110,7 +110,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		$styles[] = $this->config->urls->$name . "FontAwesomePro_{$loadStyle}.css?v=$version";
 
 		if($this->data['loadBrands']) {
-			$styles[] = $this->config->urls->$name . "vendor/css/fontawesome-pro-brands.css?v=$version";
+			$styles[] = $this->config->urls->$name . "vendor/css/fa-brands.css?v=$version";
 		}
 
 		$appendStyles = '';
@@ -143,11 +143,11 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 			$this->config->urls->$name . "vendor/js/v4-shims{$min}.js?v=$version", 
 		);
 
-		$scripts['regular'] = $this->config->urls->$name . "vendor/js/packs/regular{$min}.js?v=$version";
-		$scripts[$loadStyle] = $this->config->urls->$name . "vendor/js/packs/$loadStyle{$min}.js?v=$version";
+		$scripts['regular'] = $this->config->urls->$name . "vendor/js/fa-regular{$min}.js?v=$version";
+		$scripts[$loadStyle] = $this->config->urls->$name . "vendor/js/fa-$loadStyle{$min}.js?v=$version";
 
 		if($this->data['loadBrands']) {
-			$scripts[] = $this->config->urls->$name . "vendor/js/packs/brands{$min}.js?v=$version";
+			$scripts[] = $this->config->urls->$name . "vendor/js/fa-brands{$min}.js?v=$version";
 		}
 
 		$appendScripts = '';
