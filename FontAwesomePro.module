@@ -10,7 +10,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title' 	=> 'Font Awesome Pro',
-			'version' 	=> 102,
+			'version' 	=> 104,
 			'summary' 	=> 'Provides FontAwesome Pro css files for use in admin.',
 			'href' 		=> 'http://fontawesome.io/',
 			'autoload' 	=> 'template=admin',
@@ -140,7 +140,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 
 		$scripts = array(
 			$this->config->urls->$name . "vendor/js/fontawesome{$min}.js?v=$version",
-			$this->config->urls->$name . "vendor/js/v4-shims{$min}.js?v=$version", 
+			$this->config->urls->$name . "vendor/js/fa-v4-shims{$min}.js?v=$version", 
 		);
 
 		$scripts['regular'] = $this->config->urls->$name . "vendor/js/fa-regular{$min}.js?v=$version";
