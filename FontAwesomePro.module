@@ -39,6 +39,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	 *
 	 */
 	public function __construct() {
+
 		foreach(self::$configDefaults as $key => $value) {
 			$this->set($key, $value);
 		}
@@ -53,11 +54,59 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		parent::init();
 	}
 
+
+
+	public function replaceIconsList(HookEvent $event) {
+		
+		$event->replace = true;
+
+		$inputfield = $event->object;
+
+		bd($inputfield);
+
+		$reflFoo = new ReflectionClass($inputfield);
+		$options = $reflFoo->getProperty('options');
+		$options->setAccessible(true);
+		$icons = $options->getValue($inputfield); 
+
+		$icons[] = 'fa-alarm-clock';
+
+		//-------------
+
+		$out = '';
+		$attrs = $inputfield->getAttributes();
+		$value = $attrs['value'];
+		if($value && strpos($value, 'fa-') !== 0) $value = 'fa-' . $value;
+		if($value) $inputfield->icon = $value;
+		unset($attrs['value']);
+		$out .= "\n<select " . $inputfield->getAttributesString($attrs) . ">";
+		if(!$inputfield->getSetting('required')) $out .= "\n\t<option value=''></option>";
+		foreach($icons as $option) {
+			$option = trim($option); 
+			$selected = $value == $option ? " selected='selected'" : "";
+			$label = ucfirst(substr($option, 3)); 
+			$label = str_replace('-', ' ', $label); 
+			$out .= "\n\t<option$selected value='$option'>$label</option>";
+		}
+		$out .= "</select>&nbsp;&nbsp;";
+		$out .=
+			"<i class='fa fa-angle-right ui-priority-secondary'></i>&nbsp;" . 
+			"<a class='InputfieldIconShowAll' target='_blank' href='#'>" . 
+			"<small>" . $this->_('Show All Icons') . "</small></a>" . 
+			"<div class='InputfieldIconAll'></div>";
+
+		$event->return = $out;
+
+	}
+
 	/**
 	 * Per the Module interface, Initialize the Process, loading any related CSS or JS files
 	 *
 	 */
 	public function ready() {
+
+		//$this->addHookAfter('InputfieldIcon::render', $this, 'replaceIconsList');
+
 
 		$name = $this->classname();
 		$info = $this->getModuleInfo();
@@ -110,12 +159,12 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		$styles[] = $this->config->urls->$name . "FontAwesomePro_{$loadStyle}.css?v=$version";
 
 		if($this->data['loadBrands']) {
-			$styles[] = $this->config->urls->$name . "vendor/css/fa-brands.css?v=$version";
+			$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
 		}
 
 		$appendStyles = '';
 		foreach($styles as $style) {
-			$appendStyles .= "\t<link rel='stylesheet' href='{$style}'>\n";
+			$appendStyles .= "\n\t<link rel='stylesheet' href='{$style}'>";
 		}
 
 		$parts['head'] .= $appendStyles;
