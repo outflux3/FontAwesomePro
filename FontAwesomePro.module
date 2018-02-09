@@ -21,7 +21,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	protected static $configDefaults = array(
 		'loadOption'  => [],
 		'loadStyle'   => 'solid',
-		'loadBrands'  => 0,
+		//'loadBrands'  => 0,
 		'removeFA'    => 0,
 		'disableThis' => 0,
 	);
@@ -157,10 +157,11 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		}
 
 		$styles[] = $this->config->urls->$name . "FontAwesomePro_{$loadStyle}.css?v=$version";
+		$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
 
-		if($this->data['loadBrands']) {
-			$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
-		}
+		// if($this->data['loadBrands']) {
+		// 	$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
+		// }
 
 		$appendStyles = '';
 		foreach($styles as $style) {
@@ -192,12 +193,9 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 			$this->config->urls->$name . "vendor/js/fa-v4-shims{$min}.js?v=$version", 
 		);
 
-		$scripts['regular'] = $this->config->urls->$name . "vendor/js/fa-regular{$min}.js?v=$version";
+		//$scripts['regular'] = $this->config->urls->$name . "vendor/js/fa-regular{$min}.js?v=$version";
 		$scripts[$loadStyle] = $this->config->urls->$name . "vendor/js/fa-$loadStyle{$min}.js?v=$version";
-
-		if($this->data['loadBrands']) {
-			$scripts[] = $this->config->urls->$name . "vendor/js/fa-brands{$min}.js?v=$version";
-		}
+		$scripts[] = $this->config->urls->$name . "vendor/js/fa-brands{$min}.js?v=$version";
 
 		$appendScripts = '';
 		foreach($scripts as $script) {
@@ -272,12 +270,12 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 		$wrapper->add($f);
 
 		// ------------------------------------------------------------------------
-		$f = wire('modules')->get('InputfieldCheckbox'); 
-		$f->attr('name', 'loadBrands');
-		$f->attr('value', 1);
-		if($data['loadBrands']) $f->attr('checked', 'checked'); 
-		$f->label = __('Load Brands Font (optional)'); 
-		$wrapper->add($f);
+		// $f = wire('modules')->get('InputfieldCheckbox'); 
+		// $f->attr('name', 'loadBrands');
+		// $f->attr('value', 1);
+		// if($data['loadBrands']) $f->attr('checked', 'checked'); 
+		// $f->label = __('Load Brands Font (optional)'); 
+		// $wrapper->add($f);
 
 
 		// ------------------------------------------------------------------------
