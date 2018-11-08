@@ -10,7 +10,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title' 	=> 'Font Awesome Pro',
-			'version' 	=> 104,
+			'version' 	=> 105,
 			'summary' 	=> 'Provides FontAwesome Pro css files for use in admin.',
 			'href' 		=> 'http://fontawesome.io/',
 			'autoload' 	=> 'template=admin',
@@ -62,7 +62,7 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 
 		$inputfield = $event->object;
 
-		bd($inputfield);
+		//bd($inputfield);
 
 		$reflFoo = new ReflectionClass($inputfield);
 		$options = $reflFoo->getProperty('options');
@@ -106,7 +106,6 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	public function ready() {
 
 		//$this->addHookAfter('InputfieldIcon::render', $this, 'replaceIconsList');
-
 
 		$name = $this->classname();
 		$info = $this->getModuleInfo();
