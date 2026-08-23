@@ -26,6 +26,7 @@
  * @property array  $extraStyles
  * @property int    $loadBrands
  * @property int    $loadShims
+ * @property int    $extendPicker
  * @property int    $widthCompat
  * @property int    $replaceCore
  * @property int    $disableThis
@@ -59,6 +60,12 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	 *
 	 */
 	const baseDir = 'FontAwesome';
+
+	/**
+	 * Setting used to mark an InputfieldIcon whose options have been widened
+	 *
+	 */
+	const extendedKey = '_fontAwesomeProExtended';
 
 	/**
 	 * Style name => the CSS classes that select it
@@ -116,6 +123,9 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		'loadBrands'  => 1,
 		'loadShims'   => 1,
 
+		// widen the core icon picker with this package's icon names
+		'extendPicker' => 1,
+
 		// emit --fa-width:auto, so FA7 icons size like FA4/FA6 did
 		'widthCompat' => 1,
 
@@ -132,7 +142,6 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	private $familiesCache = null;
 	private $iconsCache = null;
 	private $familyNameCache = array();
-	private $injected = null;
 
 	/**
 	 * Count of core Font Awesome <link> tags removed from rendered markup
@@ -713,6 +722,17 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 			if($url !== '') $styles->add($url);
 		}
 
+		// ProcessWire's own admin CSS asks for the legacy family by name —
+		// `font-family: fontAwesome` with version 4 codepoints, in around 67
+		// rules across AdminThemeUikit and AdminThemeReno, including the page
+		// list chevrons. The core normally satisfies that because its own
+		// all.css bundles the version 4 font-face shim; loading fontawesome.css
+		// and the individual styles does not, so it has to be added explicitly
+		// or those rules silently lose their font. Not tied to the shims option:
+		// this is what ProcessWire itself needs, whatever else is switched off.
+		$url = $this->cssUrl('v4-font-face');
+		if($url !== '') $styles->add($url);
+
 		if($this->loadShims) {
 			$url = $this->cssUrl('v4-shims');
 			if($url !== '') $styles->add($url);
@@ -1027,11 +1047,17 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	 */
 	protected function addIconHooks() {
 
+		if(!$this->extendPicker) return;
 		if(empty($this->icons())) return;
 
 		// listing and saving: injecting before either is enough on its own
 		$this->addHookBefore('InputfieldIcon::render', $this, 'hookExtendIconInputfield');
 		$this->addHookBefore('InputfieldIcon::processInput', $this, 'hookExtendIconInputfield');
+
+		// Forms built with $wrapper->new('InputfieldIcon', …) hand the field back
+		// before anything assigns to it, which is the one creation route the core
+		// makes hookable — so widening it here means the value survives.
+		$this->addHookAfter('InputfieldWrapper::new', $this, 'hookNewInputfield');
 
 		// displaying a stored Pro icon: the value was blanked when the form was
 		// built, before any hookable method ran, so it has to be re-read from
@@ -1061,13 +1087,13 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		$icons = $this->icons();
 		if(empty($icons)) return false;
 
-		// render and processInput both inject, and a form can hold several icon
-		// fields, so instances are tracked rather than inferring from the option
-		// count — which would misread a package smaller than the core's own list
-		if($this->injected === null) $this->injected = array();
-		$id = spl_object_id($inputfield);
-		if(isset($this->injected[$id])) return true;
-		$this->injected[$id] = true;
+		// Render, processInput and the wrapper hook can all reach the same field,
+		// so the work is done once and marked on the object itself. Not keyed on
+		// spl_object_id(): those are reused once an object is freed, so a later
+		// field can inherit a freed one's id and be skipped, arriving at render
+		// with the core's narrow list still in place.
+		if($inputfield->getSetting(self::extendedKey)) return true;
+		$inputfield->set(self::extendedKey, true);
 
 		try {
 			$property = new \ReflectionProperty($inputfield, 'options');
@@ -1090,7 +1116,19 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	 *
 	 */
 	public function hookExtendIconInputfield(HookEvent $event) {
+		if(!$this->extendPicker) return;
 		$this->extendIconInputfield($event->object);
+	}
+
+	/**
+	 * Hook after InputfieldWrapper::new
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookNewInputfield(HookEvent $event) {
+		if(!$this->extendPicker) return;
+		if($event->return instanceof InputfieldIcon) $this->extendIconInputfield($event->return);
 	}
 
 	/**
@@ -1270,6 +1308,16 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		}
 
 		$f = $modules->get('InputfieldCheckbox');
+		$f->attr('name', 'extendPicker');
+		$f->attr('value', 1);
+		if($data['extendPicker']) $f->attr('checked', 'checked');
+		$f->label = $this->_('Extend the core icon picker');
+		$f->label2 = $this->_('Extend');
+		$f->notes = $this->_('Adds this package’s icon names to the core icon picker used by template and field settings. Unchecked, the pickers are left exactly as ProcessWire ships them and this module only loads the fonts — useful if you pick icons with something else, or want the admin styled in a Pro style without altering any inputfield.');
+		$f->columnWidth = 50;
+		$fieldset->add($f);
+
+		$f = $modules->get('InputfieldCheckbox');
 		$f->attr('name', 'replaceCore');
 		$f->attr('value', 1);
 		if($data['replaceCore']) $f->attr('checked', 'checked');
@@ -1350,10 +1398,13 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		$edition = $this->isPro() ? 'Pro' : 'Free';
 
 		$rows = array(
-			$this->_('Package') => $sanitizer->entities(rtrim($root['path'], '/')),
+			$this->_('Package') => "<code class='fap-break'>" . $sanitizer->entities(rtrim($root['path'], '/')) . '</code>',
 			$this->_('Version') => $sanitizer->entities("Font Awesome $edition " . ($root['version'] ?: '?')),
-			$this->_('Styles')  => count($styles) . ' — ' . $sanitizer->entities(implode(', ', $styles))
-				. (in_array('brands', $families) ? '<br>' . $this->_('plus brands, which is a separate font rather than a style') : ''),
+			$this->_('Styles')  => sprintf($this->_n('%d style', '%d styles', count($styles)), count($styles)) . ' — '
+				. $sanitizer->entities(implode(', ', $styles))
+				. (in_array('brands', $families)
+					? "<br><span class='uk-text-muted'>" . $this->_('plus brands, which is a separate font rather than a style') . '</span>'
+					: ''),
 			$this->_('Icons')   => count($icons)
 				? sprintf($this->_('%d names available to the icon picker'), count($icons))
 				: $this->_('none found — check that css/all.css is present'),
@@ -1365,9 +1416,23 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 
 		$rows += $this->getRuntimeStatus();
 
-		$out = "<table class='uk-table uk-table-small uk-table-divider'>";
+		// Values here are long by nature — filesystem paths, sixteen style names,
+		// lists of stylesheet URLs — and a table will happily push them past the
+		// right edge of the panel rather than wrap them. Fixed layout plus an
+		// explicit break keeps everything inside the box at any width.
+		$out =
+			"<style>" .
+			".fap-status{table-layout:fixed;width:100%}" .
+			".fap-status th{width:11em;vertical-align:top;white-space:nowrap}" .
+			".fap-status td{vertical-align:top;overflow-wrap:anywhere;word-break:break-word}" .
+			".fap-status .fap-break{overflow-wrap:anywhere;word-break:break-all}" .
+			"@media(max-width:640px){.fap-status,.fap-status tbody,.fap-status tr,.fap-status th,.fap-status td{display:block;width:auto}" .
+			".fap-status th{padding-bottom:0}}" .
+			"</style>";
+
+		$out .= "<table class='uk-table uk-table-small uk-table-divider fap-status'>";
 		foreach($rows as $label => $value) {
-			$out .= "<tr><th style='width:12em'>$label</th><td>$value</td></tr>";
+			$out .= "<tr><th>$label</th><td>$value</td></tr>";
 		}
 		$out .= '</table>';
 
@@ -1380,6 +1445,26 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Render a list of values as wrapping code lines
+	 *
+	 * Each value is escaped on its own and the markup joined around them
+	 * afterwards. Escaping the joined string instead would encode the separators
+	 * too, and the reader would see the tags rather than the list.
+	 *
+	 * @param array $values
+	 * @return string
+	 *
+	 */
+	protected function renderCodeList(array $values) {
+		$sanitizer = $this->wire()->sanitizer;
+		$out = array();
+		foreach($values as $value) {
+			$out[] = "<code class='fap-break'>" . $sanitizer->entities((string) $value) . '</code>';
+		}
+		return implode('<br>', $out);
 	}
 
 	/**
@@ -1410,7 +1495,7 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 			$ours[] = basename(parse_url($url, PHP_URL_PATH));
 		}
 		$rows[$this->_('Loaded now')] = $ours
-			? $sanitizer->entities(implode(', ', $ours))
+			? $this->renderCodeList($ours)
 			: "<strong class='uk-text-danger'>" . $this->_('nothing — this module queued no stylesheets for this page') . '</strong>';
 
 		// A style stylesheet is what declares the @font-face and the family name
@@ -1461,7 +1546,7 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 				$rows[$this->_('Core Font Awesome')] .=
 					"<br><strong class='uk-text-danger'>" .
 					$this->_('Still referenced by the page, and overriding this package:') .
-					'</strong><br><code>' . $sanitizer->entities(implode('</code><br><code>', $diag['remaining'])) . '</code>';
+					'</strong><br>' . $this->renderCodeList($diag['remaining']);
 			}
 		}
 
@@ -1469,7 +1554,19 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 			$rows[$this->_('Another Font Awesome')] =
 				"<strong class='uk-text-danger'>" .
 				$this->_('Something else is loading its own Font Awesome. If it comes after these stylesheets it will override them, and changing the style here will appear to do nothing:') .
-				'</strong><br><code>' . $sanitizer->entities(implode('</code><br><code>', $diag['foreign'])) . '</code>';
+				'</strong><br>' . $this->renderCodeList($diag['foreign']);
+		}
+
+		$rows[$this->_('Icon picker')] = $this->extendPicker
+			? $this->_('extended with this package’s icons')
+			: $this->_('left as ProcessWire ships it');
+
+		$risk = $this->iconsAtRisk();
+		if(!empty($risk)) {
+			$rows[$this->_('Icon picker')] .=
+				"<br><strong class='uk-text-danger'>" .
+				$this->_('These already use an icon the core picker does not know. It will show blank when you edit them, and saving will clear it — switch the picker option on, or re-pick from the core set:') .
+				'</strong><br>' . $this->renderCodeList($risk);
 		}
 
 		$rows[$this->_('ProcessWire')] = $sanitizer->entities($config->version);
@@ -1492,6 +1589,55 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		$rows[$this->_('Admin theme')] = $adminTheme ? $sanitizer->entities($adminTheme->className()) : $this->_('none');
 
 		return $rows;
+	}
+
+	/**
+	 * Find templates and fields whose icon the core picker would not recognise
+	 *
+	 * Only meaningful while the picker is left alone. The core validates an
+	 * assigned icon against its own bundled list and blanks anything else, so a
+	 * Pro-only icon on a template or field disappears from the edit form and the
+	 * next save — for any reason, not just an icon change — writes that blank
+	 * back. Nothing warns and nothing errors, so it is worth saying out loud.
+	 *
+	 * @return array Labels of the affected templates and fields
+	 *
+	 */
+	public function iconsAtRisk() {
+
+		if($this->extendPicker) return array();
+		if(empty($this->icons())) return array();
+
+		// core's own list, read from an untouched instance so it reflects
+		// whatever list this ProcessWire version would actually validate against
+		$inputfield = $this->wire()->modules->get('InputfieldIcon');
+		if(!$inputfield instanceof InputfieldIcon) return array();
+
+		try {
+			$property = new \ReflectionProperty($inputfield, 'options');
+			if(PHP_VERSION_ID < 80100) $property->setAccessible(true);
+			$known = array_flip((array) $property->getValue($inputfield));
+		} catch(\Throwable $e) {
+			return array();
+		}
+
+		$risk = array();
+
+		foreach($this->wire()->templates as $template) {
+			$icon = $template->getIcon(true);
+			if($icon === '' || isset($known[$icon])) continue;
+			$risk[] = sprintf($this->_('template %1$s (%2$s)'), $template->name, $icon);
+		}
+
+		foreach($this->wire()->fields as $field) {
+			$icon = (string) $field->icon;
+			if($icon === '') continue;
+			if(strpos($icon, 'fa-') !== 0) $icon = "fa-$icon";
+			if(isset($known[$icon])) continue;
+			$risk[] = sprintf($this->_('field %1$s (%2$s)'), $field->name, $icon);
+		}
+
+		return $risk;
 	}
 
 	/**
