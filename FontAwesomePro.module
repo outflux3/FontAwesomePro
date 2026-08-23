@@ -1,31 +1,100 @@
-<?php
+<?php namespace ProcessWire;
 
 /**
- * JS module for Selectize.js
- * http://selectize.github.io/selectize.js/
+ * Font Awesome Pro
+ * ================================================================
+ * Loads a self-hosted Font Awesome Pro package in the ProcessWire admin, in
+ * place of the Font Awesome that ships with the core.
+ *
+ * The package lives outside the module, in /site/templates/FontAwesome/, so
+ * that it survives module updates and can be version-bumped independently of
+ * both this module and ProcessWire itself.
+ *
+ * Nothing about the package is hardcoded here. The version, the available
+ * families and the icon list are all read back off the files on disk, so a
+ * newer Font Awesome release is a matter of unzipping it — no module change.
+ *
+ * @author Macrura
+ * @copyright Copyright (c) 2017-2026 outflux3
+ * @license MIT License, see LICENSE
+ *
+ * ProcessWire 3.x
+ * https://processwire.com
+ *
+ * @property string $packageDir
+ * @property string $loadStyle
+ * @property array  $extraStyles
+ * @property int    $loadBrands
+ * @property int    $loadShims
+ * @property int    $widthCompat
+ * @property int    $replaceCore
+ * @property int    $disableThis
+ *
  */
 
-class FontAwesomePro extends ModuleJS implements ConfigurableModule {
+class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 
+	/**
+	 * getModuleInfo is a module required by all modules to tell ProcessWire about them
+	 *
+	 * @return array
+	 *
+	 */
 	public static function getModuleInfo() {
 		return array(
-			'title' 	=> 'Font Awesome Pro',
-			'version' 	=> 105,
-			'summary' 	=> 'Provides FontAwesome Pro css files for use in admin.',
-			'href' 		=> 'http://fontawesome.io/',
-			'autoload' 	=> 'template=admin',
-		  );
+			'title'    => 'Font Awesome Pro',
+			'version'  => 202,
+			'summary'  => 'Loads a self-hosted Font Awesome Pro package in the admin, replacing the core Font Awesome and extending the icon picker.',
+			'author'   => 'Macrura',
+			'href'     => 'https://fontawesome.com/',
+			'icon'     => 'font-awesome',
+			'singular' => true,
+			'autoload' => 'template=admin',
+			'requires' => 'ProcessWire>=3.0.265, PHP>=7.4',
+		);
 	}
 
+	/**
+	 * Directory under /site/templates/ holding the Font Awesome package(s)
+	 *
+	 */
+	const baseDir = 'FontAwesome';
 
-	protected static $configDefaults = array(
-		'loadOption'  => [],
-		'loadStyle'   => 'solid',
-		//'loadBrands'  => 0,
-		'removeFA'    => 0,
-		'disableThis' => 0,
+	/**
+	 * Style name => the CSS classes that select it
+	 *
+	 * Font Awesome ships each style's @font-face in that style's own stylesheet,
+	 * so a class here whose stylesheet is not loaded names a family with no font
+	 * behind it. Used to redirect those to the style that is loaded.
+	 *
+	 * @var array
+	 *
+	 */
+	protected static $styleClasses = array(
+		'solid'          => array('fas', 'fa-solid'),
+		'regular'        => array('far', 'fa-regular'),
+		'light'          => array('fal', 'fa-light'),
+		'thin'           => array('fat', 'fa-thin'),
+		'duotone'        => array('fad', 'fa-duotone'),
+		'sharp-solid'    => array('fass'),
+		'sharp-regular'  => array('fasr'),
+		'sharp-light'    => array('fasl'),
+		'sharp-thin'     => array('fast'),
+		'brands'         => array('fab', 'fa-brands'),
 	);
 
+	/**
+	 * Families in a package that are not icon styles
+	 *
+	 * @var array
+	 *
+	 */
+	protected static $nonStyleFamilies = array('brands');
+
+	protected static $nonFamilyCss = array(
+		'all', 'fontawesome', 'svg', 'svg-with-js',
+		'v4-shims', 'v4-font-face', 'v5-font-face',
+	);
 
 	/**
 	 * Data as used by the get/set functions
@@ -33,274 +102,1449 @@ class FontAwesomePro extends ModuleJS implements ConfigurableModule {
 	 */
 	protected $data = array();
 
+	protected static $configDefaults = array(
+
+		// basename of the package directory to use, '' = auto-detect
+		'packageDir'  => '',
+
+		// family/style used for the admin's own icons
+		'loadStyle'   => 'solid',
+
+		// additional families to load alongside, so they can be used in custom markup
+		'extraStyles' => array(),
+
+		'loadBrands'  => 1,
+		'loadShims'   => 1,
+
+		// emit --fa-width:auto, so FA7 icons size like FA4/FA6 did
+		'widthCompat' => 1,
+
+		'replaceCore' => 1,
+		'disableThis' => 0,
+	);
+
+	/**
+	 * Runtime caches, all per-request
+	 *
+	 */
+	private $rootsCache = null;
+	private $rootCache = false;
+	private $familiesCache = null;
+	private $iconsCache = null;
+	private $familyNameCache = array();
+	private $injected = null;
+
+	/**
+	 * Count of core Font Awesome <link> tags removed from rendered markup
+	 *
+	 * @var int
+	 *
+	 */
+	private $strippedFromMarkup = 0;
+
+	/**
+	 * $config->adminIcons as the site had it, before this module overrode it
+	 *
+	 * @var array|null
+	 *
+	 */
+	private $siteAdminIcons = null;
 
 	/**
 	 * __construct() is the right place to init config vars before they'll get populated
 	 *
 	 */
 	public function __construct() {
-
+		parent::__construct();
+		// loaded here rather than at point of use: the markup backstop and the
+		// status panel both read from it on requests where the container itself
+		// was never installed
+		require_once(__DIR__ . '/FontAwesomeProStyles.php');
 		foreach(self::$configDefaults as $key => $value) {
 			$this->set($key, $value);
 		}
 	}
 
 
+	/*** DETECTION *********************************************************************/
+
 	/**
-	 * Per the Module interface, Initialize the Process, loading any related CSS or JS files
+	 * Path to the directory holding the Font Awesome package(s)
+	 *
+	 * @return string
 	 *
 	 */
-	public function init() {
-		parent::init();
-	}
-
-
-
-	public function replaceIconsList(HookEvent $event) {
-		
-		$event->replace = true;
-
-		$inputfield = $event->object;
-
-		//bd($inputfield);
-
-		$reflFoo = new ReflectionClass($inputfield);
-		$options = $reflFoo->getProperty('options');
-		$options->setAccessible(true);
-		$icons = $options->getValue($inputfield); 
-
-		$icons[] = 'fa-alarm-clock';
-
-		//-------------
-
-		$out = '';
-		$attrs = $inputfield->getAttributes();
-		$value = $attrs['value'];
-		if($value && strpos($value, 'fa-') !== 0) $value = 'fa-' . $value;
-		if($value) $inputfield->icon = $value;
-		unset($attrs['value']);
-		$out .= "\n<select " . $inputfield->getAttributesString($attrs) . ">";
-		if(!$inputfield->getSetting('required')) $out .= "\n\t<option value=''></option>";
-		foreach($icons as $option) {
-			$option = trim($option); 
-			$selected = $value == $option ? " selected='selected'" : "";
-			$label = ucfirst(substr($option, 3)); 
-			$label = str_replace('-', ' ', $label); 
-			$out .= "\n\t<option$selected value='$option'>$label</option>";
-		}
-		$out .= "</select>&nbsp;&nbsp;";
-		$out .=
-			"<i class='fa fa-angle-right ui-priority-secondary'></i>&nbsp;" . 
-			"<a class='InputfieldIconShowAll' target='_blank' href='#'>" . 
-			"<small>" . $this->_('Show All Icons') . "</small></a>" . 
-			"<div class='InputfieldIconAll'></div>";
-
-		$event->return = $out;
-
+	public function basePath() {
+		return $this->wire()->config->paths->templates . self::baseDir . '/';
 	}
 
 	/**
-	 * Per the Module interface, Initialize the Process, loading any related CSS or JS files
+	 * URL to the directory holding the Font Awesome package(s)
+	 *
+	 * @return string
+	 *
+	 */
+	public function baseUrl() {
+		return $this->wire()->config->urls->templates . self::baseDir . '/';
+	}
+
+	/**
+	 * Is $path a Font Awesome package root?
+	 *
+	 * A root is any directory holding both css/fontawesome.css and webfonts/.
+	 * Requiring both is what keeps the relative ../webfonts/ URLs inside the
+	 * package's own @font-face rules resolvable.
+	 *
+	 * @param string $path
+	 * @return bool
+	 *
+	 */
+	protected function isRoot($path) {
+		return is_file($path . 'css/fontawesome.css') && is_dir($path . 'webfonts');
+	}
+
+	/**
+	 * Get all Font Awesome package roots found on disk
+	 *
+	 * Supports two layouts: the package unzipped directly into the base
+	 * directory, or one or more release directories inside it. The second lets
+	 * a new release be unzipped alongside the old one and switched with the
+	 * Package select, so a rollback is a dropdown rather than a re-download.
+	 *
+	 * @return array Indexed by directory basename ('' for the flat layout)
+	 *
+	 */
+	public function roots() {
+
+		if($this->rootsCache !== null) return $this->rootsCache;
+
+		$base = $this->basePath();
+		$roots = array();
+
+		if(!is_dir($base)) return $this->rootsCache = $roots;
+
+		if($this->isRoot($base)) {
+			$roots[''] = array(
+				'name' => '',
+				'path' => $base,
+				'url'  => $this->baseUrl(),
+			);
+		}
+
+		foreach((array) glob($base . '*', GLOB_ONLYDIR) as $dir) {
+			$name = basename($dir);
+			if(strpos($name, '.') === 0) continue;
+			$path = $dir . '/';
+			if(!$this->isRoot($path)) continue;
+			$roots[$name] = array(
+				'name' => $name,
+				'path' => $path,
+				'url'  => $this->baseUrl() . $name . '/',
+			);
+		}
+
+		foreach($roots as $name => $root) {
+			$roots[$name]['version'] = $this->readVersion($root['path'], $name);
+		}
+
+		return $this->rootsCache = $roots;
+	}
+
+	/**
+	 * Get the active Font Awesome package root
+	 *
+	 * @return array|null Array with name/path/url/version keys, or null if none found
+	 *
+	 */
+	public function root() {
+
+		if($this->rootCache !== false) return $this->rootCache;
+
+		$roots = $this->roots();
+		if(empty($roots)) return $this->rootCache = null;
+
+		$name = (string) $this->packageDir;
+		if(isset($roots[$name])) return $this->rootCache = $roots[$name];
+
+		// configured package is gone, or nothing configured: use the newest
+		uasort($roots, function($a, $b) {
+			return version_compare((string) $a['version'], (string) $b['version']);
+		});
+
+		return $this->rootCache = end($roots);
+	}
+
+	/**
+	 * Read the Font Awesome version out of a package
+	 *
+	 * Every Font Awesome stylesheet opens with a banner comment naming the
+	 * exact release, which makes the package self-identifying:
+	 *
+	 *   /*!
+	 *    * Font Awesome Pro 7.3.1 by @fontawesome - https://fontawesome.com
+	 *
+	 * @param string $path Package root path
+	 * @param string $name Directory basename, used as a fallback source
+	 * @return string Version, or blank if it could not be determined
+	 *
+	 */
+	protected function readVersion($path, $name = '') {
+
+		$file = $path . 'css/fontawesome.css';
+		$head = is_file($file) ? (string) file_get_contents($file, false, null, 0, 512) : '';
+
+		if(preg_match('/Font\s+Awesome\s+(?:Pro|Free)?\s*(\d+\.\d+(?:\.\d+)?)/i', $head, $m)) {
+			return $m[1];
+		}
+
+		// fall back to a version-looking fragment of the directory name
+		if($name !== '' && preg_match('/(\d+\.\d+(?:\.\d+)?)/', $name, $m)) {
+			return $m[1];
+		}
+
+		return '';
+	}
+
+	/**
+	 * Get the version of the active package
+	 *
+	 * @return string e.g. '7.3.1', or blank if no package is installed
+	 *
+	 */
+	public function version() {
+		$root = $this->root();
+		return $root ? (string) $root['version'] : '';
+	}
+
+	/**
+	 * Is the active package Font Awesome Pro (rather than Free)?
+	 *
+	 * @return bool
+	 *
+	 */
+	public function isPro() {
+		$root = $this->root();
+		if(!$root) return false;
+		$head = (string) file_get_contents($root['path'] . 'css/fontawesome.css', false, null, 0, 512);
+		return stripos($head, 'Font Awesome Pro') !== false;
+	}
+
+	/**
+	 * Get the icon families available in the active package
+	 *
+	 * Derived from the CSS files actually present, so the list reflects what
+	 * was downloaded rather than what a given Font Awesome release could
+	 * theoretically contain.
+	 *
+	 * @return array of family names, e.g. solid, light, sharp-thin, duotone
+	 *
+	 */
+	public function families() {
+
+		if($this->familiesCache !== null) return $this->familiesCache;
+
+		$root = $this->root();
+		if(!$root) return $this->familiesCache = array();
+
+		$families = array();
+
+		foreach((array) glob($root['path'] . 'css/*.css') as $file) {
+			$name = basename($file, '.css');
+			if(substr($name, -4) === '.min') continue;
+			if(in_array($name, self::$nonFamilyCss)) continue;
+			$families[] = $name;
+		}
+
+		sort($families, SORT_STRING);
+
+		return $this->familiesCache = $families;
+	}
+
+	/**
+	 * Get the icon styles available in the active package
+	 *
+	 * The styles proper — the weight-and-shape variants an icon can be drawn in.
+	 * Brands is a family in the package but not a style: its glyphs exist in no
+	 * other font and belong to no weight, it is governed by its own option, and
+	 * choosing it as the default would point every icon in the admin at a font
+	 * containing only brand logos.
+	 *
+	 * @return array
+	 *
+	 */
+	public function styles() {
+		return array_values(array_diff($this->families(), self::$nonStyleFamilies));
+	}
+
+	/**
+	 * Get the CSS font-family name a given style resolves to
+	 *
+	 * Read from the package rather than assumed, so the override stylesheet
+	 * never has to guess between 'Font Awesome 6 Pro' and 'Font Awesome 7 Pro',
+	 * or between the Classic, Sharp and Duotone family names.
+	 *
+	 * @param string $style Family name, e.g. 'solid' or 'sharp-duotone-light'
+	 * @return string Font family name, or blank if it could not be read
+	 *
+	 */
+	public function fontFamilyName($style) {
+
+		if(isset($this->familyNameCache[$style])) return $this->familyNameCache[$style];
+
+		$root = $this->root();
+		$file = $root ? $root['path'] . 'css/' . $style . '.css' : '';
+		$name = '';
+
+		if($file && is_file($file)) {
+			$css = (string) file_get_contents($file, false, null, 0, 4096);
+			// FA7: --fa-family-classic: 'Font Awesome 7 Pro';
+			// FA6: --fa-style-family-classic: 'Font Awesome 6 Pro';
+			if(preg_match('/--fa-(?:style-)?family-[a-z-]+\s*:\s*[\'"]([^\'"]+)[\'"]/i', $css, $m)) {
+				$name = $m[1];
+			} else if(preg_match('/@font-face\s*\{[^}]*font-family\s*:\s*[\'"]([^\'"]+)[\'"]/is', $css, $m)) {
+				$name = $m[1];
+			}
+		}
+
+		return $this->familyNameCache[$style] = $name;
+	}
+
+	/**
+	 * Get every icon name in the active package
+	 *
+	 * Parsed out of css/all.css. The package's own metadata/ directory carries
+	 * a richer description of the same thing, but icons.json is 36MB and
+	 * icon-families.json is 115MB in Font Awesome Pro 7 — far too large to
+	 * read on a request — while all.css is around 250KB and states the same
+	 * icon names.
+	 *
+	 * Result is cached with the package path and the mtime of all.css in the
+	 * cache name, so swapping or updating a package invalidates it.
+	 *
+	 * @param bool $reset Rebuild the cache
+	 * @return array of icon names including the 'fa-' prefix
+	 *
+	 */
+	public function icons($reset = false) {
+
+		if(!$reset && $this->iconsCache !== null) return $this->iconsCache;
+
+		$root = $this->root();
+		if(!$root) return $this->iconsCache = array();
+
+		$file = $root['path'] . 'css/all.css';
+		if(!is_file($file)) $file = $root['path'] . 'css/all.min.css';
+		if(!is_file($file)) return $this->iconsCache = array();
+
+		$cache = $this->wire()->cache;
+		$name = 'icons-' . md5($root['path'] . '-' . filemtime($file));
+
+		// deleteFor() with no name clears the whole namespace, dropping the
+		// entries for any package this site no longer uses
+		if($reset) $cache->deleteFor($this);
+
+		$icons = $cache->getFor($this, $name, WireCache::expireNever, function() use($file) {
+			return $this->parseIcons($file);
+		});
+
+		return $this->iconsCache = is_array($icons) ? $icons : array();
+	}
+
+	/**
+	 * Parse icon names out of a Font Awesome stylesheet
+	 *
+	 * Font Awesome 6+ declares each icon as a custom property on its own class:
+	 *
+	 *   .fa-house { --fa: "\f015"; }
+	 *
+	 * Aliases share a glyph, and how they are written differs by release and by
+	 * whether the file is minified — Font Awesome 6 groups them into a single
+	 * selector list (.fa-address-book,.fa-contact-book{--fa:"\f2b9"}) while
+	 * Font Awesome 7 writes one rule each. Matching a lone selector would keep
+	 * only the last name of a group, silently dropping the canonical name in
+	 * favour of its alias, so the whole selector list is captured and split.
+	 *
+	 * @param string $file
+	 * @return array
+	 *
+	 */
+	protected function parseIcons($file) {
+
+		$css = (string) file_get_contents($file);
+		$icons = array();
+
+		$re = '/((?:\.fa-[a-z0-9-]+\s*,\s*)*\.fa-[a-z0-9-]+)\s*\{([^}]*)\}/';
+
+		if(preg_match_all($re, $css, $matches)) {
+			foreach($matches[1] as $key => $selectors) {
+				// only rules that actually assign a glyph describe an icon;
+				// this skips modifiers like .fa-fw, .fa-spin, .fa-2x
+				if(!preg_match('/(?:^|;)\s*--fa\s*:/', $matches[2][$key])) continue;
+				foreach(explode(',', $selectors) as $selector) {
+					$selector = trim($selector);
+					if(strpos($selector, '.fa-') !== 0) continue;
+					$icons[substr($selector, 1)] = true;
+				}
+			}
+		}
+
+		$icons = array_keys($icons);
+		sort($icons, SORT_STRING);
+
+		return $icons;
+	}
+
+	/**
+	 * URL to a stylesheet in the active package, with cache-busting
+	 *
+	 * @param string $name Basename without extension, e.g. 'fontawesome'
+	 * @return string Blank if the file is not present
+	 *
+	 */
+	public function cssUrl($name) {
+
+		$root = $this->root();
+		if(!$root) return '';
+
+		$min = $this->wire()->config->debug ? '' : '.min';
+		$file = 'css/' . $name . $min . '.css';
+
+		if(!is_file($root['path'] . $file)) {
+			if($min === '') return '';
+			$file = 'css/' . $name . '.css';
+			if(!is_file($root['path'] . $file)) return '';
+		}
+
+		return $root['url'] . $file . '?v=' . $this->cacheBust($root['path'] . $file);
+	}
+
+	/**
+	 * Cache-busting value for a file in the package
+	 *
+	 * Module version, as for any module asset, plus the Font Awesome version.
+	 * The second is what actually does the work here: these files live outside
+	 * the module and are meant to be updated on their own, so replacing the
+	 * package changes nothing about the module version. Debug mode adds the
+	 * file's modification time, so edits made in place show up immediately.
+	 *
+	 * If the package version could not be read, the modification time stands in
+	 * for it even outside debug mode — otherwise nothing in the URL would change
+	 * when the package is replaced, which is the one case that must never cache.
+	 *
+	 * @param string $path Full path to the file
+	 * @return string
+	 *
+	 */
+	protected function cacheBust($path) {
+
+		$info = self::getModuleInfo();
+		$parts = array((int) $info['version']);
+
+		$version = $this->version();
+		if($version !== '') $parts[] = $version;
+
+		if($version === '' || $this->wire()->config->debug) $parts[] = filemtime($path);
+
+		return implode('.', $parts);
+	}
+
+
+	/*** LOADING ***********************************************************************/
+
+	/**
+	 * Per the Module interface, called after all modules are initialized
 	 *
 	 */
 	public function ready() {
 
-		//$this->addHookAfter('InputfieldIcon::render', $this, 'replaceIconsList');
+		if($this->disableThis) return;
+		if(!$this->root()) return;
 
-		$name = $this->classname();
-		$info = $this->getModuleInfo();
-		$version = (int) $info['version'];
+		$this->applyStyleContainer();
+		$this->applyAdminIcons();
+		$this->applyStyles();
+		$this->addIconHooks();
 
-		if($this->data['disableThis']) return;
-
-		if($this->data['loadOption'] == 'webfonts') {
-			$this->addHookAfter('AdminTheme::getExtraMarkup', $this, 'loadWebfonts');
-		}
-
-		if($this->data['loadOption'] == 'svg-framework') {
-			$this->addHookAfter('AdminTheme::getExtraMarkup', $this, 'loadSVGFramework');
-		}
-
-		if($this->data['removeFA']) {
-
-			//  reno & default: hook before getExtraMarkup
-			if($this->user->admin_theme != 'AdminThemeUikit') {
-				$this->addHookBefore('AdminTheme::getExtraMarkup', $this, 'removeFontAwesome');
-			}
-
-			if($this->user->admin_theme == 'AdminThemeUikit') {
-				$this->addHookAfter('Page::render', $this, 'nullifyCoreFA', array('priority'=>1000));
-			}
-
-		}
-
+		$this->addHookAfter('Page::render', $this, 'hookStripCoreFontAwesome', array('priority' => 1000));
 	}
 
+	/**
+	 * Remove any core Font Awesome <link> that never passed through $config->styles
+	 *
+	 * The stylesheet container catches the core admin themes, which all append
+	 * through $config->styles. It cannot catch a theme or module that writes its
+	 * own <link> into the head — and one core Font Awesome stylesheet loading
+	 * after this module's is enough to take over every icon, since its rules are
+	 * later and equally specific. That shows up as icons rendering in the wrong
+	 * version rather than as an obvious error, so the markup is checked too.
+	 *
+	 * This also records what happened, because the config screen is built before
+	 * the admin theme renders its head and so cannot observe any of it directly.
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookStripCoreFontAwesome(HookEvent $event) {
 
-	public function loadWebfonts(HookEvent $event) {
+		$out = $event->return;
+		if(!is_string($out)) return;
 
-		$name = $this->classname();
-		$info = $this->getModuleInfo();
-		$version = (int) $info['version'];
+		$count = 0;
 
-		$parts = $event->return;
-
-		$styles = array(
-			$this->config->urls->$name . "vendor/css/fontawesome.css?v=$version",
-		);
-
-		// Icon Style (regular, solid, light)
-		$loadStyle = $this->data['loadStyle'];
-		if($this->data['loadStyle'] != 'regular') {
-			$styles[] = $this->config->urls->$name . "FontAwesomePro_regular.css?v=$version";
+		if($this->replaceCore && strpos($out, FontAwesomeProStyles::corePath) !== false) {
+			$re = '#<link\b[^>]*\shref=[\'"][^\'"]*' . preg_quote(FontAwesomeProStyles::corePath, '#') . '[^\'"]*[\'"][^>]*>#i';
+			$stripped = preg_replace($re, '', $out, -1, $count);
+			if($count && $stripped !== null) {
+				$this->strippedFromMarkup = $count;
+				$event->return = $stripped;
+			}
 		}
 
-		$styles[] = $this->config->urls->$name . "FontAwesomePro_{$loadStyle}.css?v=$version";
-		$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
+		$styles = $this->wire()->config->styles;
 
-		// if($this->data['loadBrands']) {
-		// 	$styles[] = $this->config->urls->$name . "FontAwesomePro_brands.css?v=$version";
-		// }
+		// Record the URL of anything that still refers to a core Font Awesome,
+		// not merely how many: knowing which file it is, is the difference
+		// between "something is overriding this" and knowing what to go and fix.
+		$remaining = array();
+		if(preg_match_all('#[\'"(]([^\'")]*' . preg_quote(FontAwesomeProStyles::corePath, '#') . '[^\'")]*)[\'")]#i', $event->return, $m)) {
+			$remaining = array_values(array_unique($m[1]));
+		}
 
-		$appendStyles = '';
+		// Any *other* Font Awesome on the page, wherever it came from. The core's
+		// copy is only the obvious source: a module or admin theme that bundles
+		// its own is just as capable of taking over every icon, and looks for all
+		// the world like this module having no effect at all.
+		$foreign = array();
+		if(preg_match_all('#<link\b[^>]*\shref=[\'"]([^\'"]+)[\'"]#i', $event->return, $m)) {
+			$ours = '/' . self::baseDir . '/';
+			foreach(array_unique($m[1]) as $href) {
+				if(strpos($href, $ours) !== false) continue;
+				if(!preg_match('#(^|[/-])font-?awesome#i', $href)) continue;
+				$foreign[] = $href;
+			}
+		}
+
+		$this->wire()->session->setFor($this, 'diagnostics', array(
+			'contained'   => $styles instanceof FontAwesomeProStyles,
+			'intercepted' => $styles instanceof FontAwesomeProStyles ? count($styles->getIntercepted()) : 0,
+			'stripped'    => $count,
+			'remaining'   => $remaining,
+			'foreign'     => $foreign,
+		));
+	}
+
+	/**
+	 * Swap $config->styles for the container that intercepts core Font Awesome
+	 *
+	 */
+	protected function applyStyleContainer() {
+
+		$config = $this->wire()->config;
+		$styles = $config->styles;
+
+		if($styles instanceof FontAwesomeProStyles) return;
+
+		$container = $this->wire(new FontAwesomeProStyles());
+		$container->setMode($this->replaceCore
+			? FontAwesomeProStyles::modeRemove
+			: FontAwesomeProStyles::modeDemote);
+
 		foreach($styles as $style) {
-			$appendStyles .= "\n\t<link rel='stylesheet' href='{$style}'>";
+			$container->add($style);
 		}
 
-		$parts['head'] .= $appendStyles;
-		$event->return = $parts;
-
+		$config->styles = $container;
 	}
-
 
 	/**
-	 * Currently this only works with the solid icons; base files need to be loaded before pack files
-	 * @return [type] [description]
+	 * Tell the core which Font Awesome is actually loaded
+	 *
+	 * Since 3.0.265 every icon code path branches on this one value:
+	 * wireIconMarkup() picks between Font Awesome 4 and 6+ class conventions,
+	 * ProcessWire.icon() does the same in JS, and InputfieldIcon chooses
+	 * between icons.inc and icons6.inc. Setting it is what makes the rest of
+	 * the admin agree with the package on disk.
+	 *
+	 * Only applied when the core stylesheets are being replaced. Leaving core
+	 * Font Awesome in place while claiming a version it does not have would
+	 * send AdminThemeUikit looking for a directory that isn't there.
+	 *
 	 */
-	public function loadSVGFramework(HookEvent $event) {
-		$name = $this->classname();
-		$info = $this->getModuleInfo();
-		$version = (int) $info['version'];
-		$min = $this->config->debug ? '' : '.min';
+	protected function applyAdminIcons() {
 
-		$parts = $event->return;
+		$config = $this->wire()->config;
+		$icons = $config->adminIcons;
+		if(!is_array($icons)) $icons = array('type' => 'fa', 'version' => '');
 
-		$loadStyle = $this->data['loadStyle'];
+		// kept for the status panel: a site that pins this below 6 is telling
+		// AdminThemeUikit to load Font Awesome 4 no matter what else is present
+		$this->siteAdminIcons = $icons;
 
-		$scripts = array(
-			$this->config->urls->$name . "vendor/js/fontawesome{$min}.js?v=$version",
-			$this->config->urls->$name . "vendor/js/fa-v4-shims{$min}.js?v=$version", 
-		);
+		if(!$this->replaceCore) return;
 
-		//$scripts['regular'] = $this->config->urls->$name . "vendor/js/fa-regular{$min}.js?v=$version";
-		$scripts[$loadStyle] = $this->config->urls->$name . "vendor/js/fa-$loadStyle{$min}.js?v=$version";
-		$scripts[] = $this->config->urls->$name . "vendor/js/fa-brands{$min}.js?v=$version";
+		$version = $this->version();
+		if($version === '') return;
 
-		$appendScripts = '';
-		foreach($scripts as $script) {
-			$appendScripts .= "\n\t<script type='text/javascript' src='{$script}'></script>";
-		}
+		$icons['version'] = $version;
 
-		$parts['head'] .= $appendScripts;
-		$event->return = $parts;
+		$config->adminIcons = $icons;
 
+		// the admin theme already published its own value during init, and JS
+		// config is serialized at render time, so this later write wins
+		$config->js('adminIcons', $icons);
 	}
 
-	public function removeFontAwesome() {
-		$styles = $this->config->styles;
-		foreach($styles as $key => $value) {
-			if(strpos($value, 'font-awesome') !== false) {
-				$styles->remove($value);
+	/**
+	 * Queue the package stylesheets and the style override
+	 *
+	 */
+	protected function applyStyles() {
+
+		$config = $this->wire()->config;
+		$styles = $config->styles;
+
+		// core utilities first: everything else builds on it
+		$url = $this->cssUrl('fontawesome');
+		if($url === '') return;
+		$styles->add($url);
+
+		foreach($this->stylesToLoad() as $style) {
+			$url = $this->cssUrl($style);
+			if($url !== '') $styles->add($url);
+		}
+
+		if($this->loadShims) {
+			$url = $this->cssUrl('v4-shims');
+			if($url !== '') $styles->add($url);
+		}
+
+		$css = $this->renderFontFaceOverrides() . $this->renderOverrideCss();
+		if($css === '') return;
+
+		$adminTheme = $this->wire()->adminTheme;
+		if(!$adminTheme instanceof AdminTheme) return;
+
+		// extra head markup is echoed after the <link> loop in all core admin
+		// themes, which is the only placement that reliably outranks them
+		$adminTheme->addExtraMarkup('head', "<style>$css</style>");
+	}
+
+	/**
+	 * Get the style whose stylesheet supplies the admin's icons
+	 *
+	 * Never returns blank while any family is installed, and that guarantee is
+	 * the point. Font Awesome splits its CSS so that fontawesome.css carries the
+	 * icon codepoints while each style's own file carries the @font-face and the
+	 * family name it resolves to. Loading the first without the second yields a
+	 * page where every icon has a codepoint and no font to draw it with — which
+	 * renders as an empty box showing the hex value, with nothing in the console
+	 * and no failed request to point at.
+	 *
+	 * @return string Blank only when the package ships no families at all
+	 *
+	 */
+	public function defaultStyle() {
+
+		$styles = $this->styles();
+		if(empty($styles)) return '';
+
+		if(in_array($this->loadStyle, $styles)) return $this->loadStyle;
+
+		// configured style is missing from this package: prefer solid, which is
+		// what Font Awesome itself treats as the default, else take what there is
+		if(in_array('solid', $styles)) return 'solid';
+
+		return reset($styles);
+	}
+
+	/**
+	 * Get the family stylesheets to load, in order
+	 *
+	 * @return array
+	 *
+	 */
+	protected function stylesToLoad() {
+
+		$families = $this->families();
+		$styles = array();
+
+		$style = $this->defaultStyle();
+		if($style !== '') $styles[] = $style;
+
+		foreach((array) $this->extraStyles as $style) {
+			if(!in_array($style, $families)) continue;
+			if(in_array($style, $styles)) continue;
+			$styles[] = $style;
+		}
+
+		if($this->loadBrands && in_array('brands', $families) && !in_array('brands', $styles)) {
+			$styles[] = 'brands';
+		}
+
+		return $styles;
+	}
+
+	/**
+	 * Re-declare the package's @font-face rules with cache-busted font URLs
+	 *
+	 * Font Awesome references its webfonts from inside its own stylesheets, as
+	 * `url("../webfonts/fa-solid-900.woff2")` with nothing to distinguish one
+	 * release from the next. Version the stylesheet all you like: the font file
+	 * behind it keeps the same URL forever, so a browser that cached it — from a
+	 * different release, or a half-finished upload — will go on using that copy
+	 * with no way to tell. Icons then fail per-machine and per-browser while the
+	 * server is serving everything correctly, which is close to undebuggable.
+	 *
+	 * A later @font-face for the same family and weight replaces an earlier one,
+	 * so re-declaring them here, after the package's own stylesheets, is enough
+	 * to put a version on the font itself.
+	 *
+	 * @return string
+	 *
+	 */
+	protected function renderFontFaceOverrides() {
+
+		$root = $this->root();
+		if(!$root) return '';
+
+		$out = '';
+
+		foreach($this->stylesToLoad() as $style) {
+
+			$file = $root['path'] . "css/$style.css";
+			if(!is_file($file)) continue;
+
+			$css = (string) file_get_contents($file);
+			if(!preg_match_all('/@font-face\s*\{([^}]*)\}/i', $css, $matches)) continue;
+
+			foreach($matches[1] as $block) {
+
+				$replaced = 0;
+
+				$block = preg_replace_callback(
+					'#url\(\s*[\'"]?\.\./webfonts/([^\'")]+)[\'"]?\s*\)#i',
+					function($m) use($root, &$replaced) {
+						$path = $root['path'] . 'webfonts/' . $m[1];
+						if(!is_file($path)) return $m[0];
+						$replaced++;
+						return 'url("' . $root['url'] . 'webfonts/' . $m[1] . '?v=' . $this->cacheBust($path) . '")';
+					},
+					$block
+				);
+
+				// only worth emitting if a font URL was actually versioned
+				if($replaced) $out .= '@font-face{' . trim(preg_replace('/\s+/', ' ', $block)) . '}';
 			}
 		}
+
+		return $out;
 	}
 
 	/**
-	 * super hacky
+	 * Build the CSS that points the core's own icon markup at the chosen style
+	 *
+	 * The core emits <i class='fa fa-home'> or <i class='fas fa-home'>, and
+	 * Font Awesome pins both to solid. Redirecting them is a matter of
+	 * reassigning the two custom properties the base .fa rule reads.
+	 *
+	 * @return string
+	 *
 	 */
-	public function nullifyCoreFA($event) {
-		$name = $this->classname();
-		$modRoot = $this->config->urls->$name;
-		$root = $this->config->urls->root;
-		if($root !== '/') {
-			$modRoot = str_replace($root,'/',$modRoot);
+	protected function renderOverrideCss() {
+
+		$rules = array();
+		$root = array();
+
+		// the style actually loaded, not the one configured — overriding the
+		// weight to one whose @font-face is absent would draw nothing
+		$style = $this->defaultStyle();
+		if($style === '') return '';
+
+		$weight = $this->styleWeight($style);
+		$family = $this->fontFamilyName($style);
+		if($family === '') return '';
+
+		$root[] = "--fa-family: '$family'";
+		if($weight !== '') $root[] = "--fa-style: $weight";
+
+		// Every style class whose own stylesheet is not loaded, pointed at the
+		// one that is. Font Awesome puts the @font-face in each style's file, so
+		// markup naming a style we did not load — `far`, or `fas` when the chosen
+		// style is Sharp — would otherwise resolve to a family with no font
+		// behind it and draw an empty box.
+		// The `html body` prefix is load-bearing, and the exact amount of it
+		// matters. An admin module may inject a stylesheet after the page has
+		// loaded — AdminOnSteroids pulls in the core Font Awesome 4 for its own
+		// pseudo-element icons — and nothing rendered server-side can come later
+		// in the cascade than that, so ordering alone cannot win. Two elements
+		// and one class beats their bare `.fa` on specificity regardless of
+		// order, while still losing to any two-class rule. That last part is why
+		// this is not `!important`: v4-shims redirects Font Awesome 4 style
+		// brand markup with `.fa.fa-trello`, and brand glyphs exist in no other
+		// font, so those rules have to keep winning.
+		$prefix = 'html body ';
+
+		$selectors = array($prefix . '.fa');
+		foreach(self::$styleClasses as $name => $classes) {
+			if($name === 'brands') continue; // its glyphs are in no other font
+			if(in_array($name, $this->stylesToLoad())) continue;
+			foreach($classes as $class) $selectors[] = $prefix . ".$class";
 		}
-		$dummyFile = $modRoot . 'font-awesome-dummy.css';
-		$search = '/wire/templates-admin/styles/font-awesome/css/font-awesome.min.css';
-		$replace = $dummyFile;
-		$event->return = str_replace($search,$replace,$event->return);
+
+		$declarations = "--fa-family: '$family'; font-family: '$family';";
+		if($weight !== '') $declarations .= " --fa-style: $weight; font-weight: $weight;";
+
+		$rules[] = implode(', ', $selectors) . " { $declarations }";
+
+		// Font Awesome 4 names the glyph per icon (`.fa-envelope-o::before {
+		// content: "\f003" }`) where Font Awesome 7 reads it from a custom
+		// property. Both selectors carry the same specificity, so a stylesheet
+		// injected at runtime wins on source order alone and the icon renders
+		// its version 4 codepoint against a version 7 font. Restating the
+		// version 7 rule with two elements in front settles it by specificity.
+		$rules[] = $prefix . '.fa::before { content: var(--fa); }';
+
+		$shim = $this->renderShimOverrides($family, $weight);
+		if($shim !== '') $rules[] = $shim;
+
+		// Font Awesome 7 makes every icon 1.25em wide, where 4 and 6 sized to
+		// the glyph and left .fa-fw to opt in. Restoring auto width keeps the
+		// admin's existing spacing in labels, breadcrumbs and buttons.
+		if($this->widthCompat && (int) substr($this->version(), 0, 1) >= 7) {
+			$root[] = '--fa-width: auto';
+		}
+
+		if(!empty($root)) array_unshift($rules, ':root { ' . implode('; ', $root) . '; }');
+
+		return implode(' ', $rules);
 	}
 
+	/**
+	 * Point the version 4 shims at a family that is actually loaded
+	 *
+	 * The shims rewrite old icon names — `fa-envelope-o` and the rest of the
+	 * outline set — and pin them to `"Font Awesome 7 Pro"` at weight 400, which
+	 * assumes the classic regular stylesheet is loaded. It usually isn't: with
+	 * Sharp Regular chosen, the only family with a font behind it is Sharp, and
+	 * every shimmed icon renders as an empty box.
+	 *
+	 * Their `.fa.fa-name` selectors deliberately out-rank the general rule, so
+	 * they have to be restated one by one rather than covered by a broader
+	 * selector. The brand shims are left alone: brand glyphs exist in no other
+	 * font, so redirecting those would break them instead.
+	 *
+	 * @param string $family Family the icons should resolve to
+	 * @param string $weight Weight of the default style
+	 * @return string
+	 *
+	 */
+	protected function renderShimOverrides($family, $weight) {
+
+		if(!$this->loadShims) return '';
+
+		$root = $this->root();
+		if(!$root) return '';
+
+		$file = $root['path'] . 'css/v4-shims.css';
+		if(!is_file($file)) return '';
+
+		$brands = $this->fontFamilyName('brands');
+		$selectors = array();
+
+		if(!preg_match_all('/([^{}]+)\{([^}]*font-family[^}]*)\}/', (string) file_get_contents($file), $matches)) return '';
+
+		foreach($matches[1] as $i => $group) {
+			// brand names keep whatever the shim gave them
+			if($brands !== '' && strpos($matches[2][$i], $brands) !== false) continue;
+			foreach(explode(',', $group) as $selector) {
+				$selector = trim($selector);
+				if(!preg_match('/^\.fa\.fa-[a-z0-9-]+$/', $selector)) continue;
+				$selectors[$selector] = true;
+			}
+		}
+
+		if(empty($selectors)) return '';
+
+		// The outline names mean the regular weight, so keep that where a regular
+		// face of this family is loaded, and fall back to the default weight
+		// where it is not — a weight with no font behind it is what caused this.
+		foreach($this->stylesToLoad() as $style) {
+			if($this->fontFamilyName($style) !== $family) continue;
+			if($this->styleWeight($style) !== '400') continue;
+			$weight = '400';
+			break;
+		}
+
+		$out = array();
+		foreach(array_keys($selectors) as $selector) $out[] = 'html body ' . $selector;
+
+		$declarations = "--fa-family: '$family'; font-family: '$family';";
+		if($weight !== '') $declarations .= " --fa-style: $weight; font-weight: $weight;";
+
+		return implode(', ', $out) . " { $declarations }";
+	}
+
+	/**
+	 * Get the CSS font-weight a family name implies
+	 *
+	 * @param string $style
+	 * @return string Blank when the family carries no weight of its own
+	 *
+	 */
+	protected function styleWeight($style) {
+
+		if($style === '') return '';
+
+		$weights = array(
+			'thin'     => '100',
+			'light'    => '300',
+			'regular'  => '400',
+			'semibold' => '600',
+			'solid'    => '900',
+		);
+
+		// families are named <variant>-<weight>, e.g. sharp-duotone-light,
+		// except plain 'duotone' and 'sharp' which mean the solid weight
+		foreach($weights as $name => $weight) {
+			if($style === $name || substr($style, -(strlen($name) + 1)) === "-$name") return $weight;
+		}
+
+		return '900';
+	}
+
+
+	/*** ICON PICKER *******************************************************************/
+
+	/**
+	 * Hook the points where the core's icon picker can be widened
+	 *
+	 * InputfieldIcon validates against its own bundled icon list and silently
+	 * blanks anything it does not recognise, which is every Pro-only icon.
+	 * Neither its constructor, its init() nor setAttribute() is hookable, and
+	 * neither is Modules::getModule(), so the Pro list has to be merged in at
+	 * each hookable point instead.
+	 *
+	 */
+	protected function addIconHooks() {
+
+		if(empty($this->icons())) return;
+
+		// listing and saving: injecting before either is enough on its own
+		$this->addHookBefore('InputfieldIcon::render', $this, 'hookExtendIconInputfield');
+		$this->addHookBefore('InputfieldIcon::processInput', $this, 'hookExtendIconInputfield');
+
+		// displaying a stored Pro icon: the value was blanked when the form was
+		// built, before any hookable method ran, so it has to be re-read from
+		// the template or field it came from
+		$this->addHookAfter('ProcessTemplate::buildEditForm', $this, 'hookTemplateEditForm');
+		$this->addHookAfter('ProcessField::buildEditFormBasics', $this, 'hookFieldEditForm');
+	}
+
+	/**
+	 * Merge the Pro icon list into an InputfieldIcon
+	 *
+	 * Public so that third-party code building its own InputfieldIcon can widen
+	 * it before assigning a Pro-only value:
+	 *
+	 *   $f = $modules->get('InputfieldIcon');
+	 *   $modules->get('FontAwesomePro')->extendIconInputfield($f);
+	 *   $f->attr('value', 'fa-alarm-clock');
+	 *
+	 * @param Inputfield $inputfield
+	 * @return bool True if the options were extended
+	 *
+	 */
+	public function extendIconInputfield(Inputfield $inputfield) {
+
+		if(!$inputfield instanceof InputfieldIcon) return false;
+
+		$icons = $this->icons();
+		if(empty($icons)) return false;
+
+		// render and processInput both inject, and a form can hold several icon
+		// fields, so instances are tracked rather than inferring from the option
+		// count — which would misread a package smaller than the core's own list
+		if($this->injected === null) $this->injected = array();
+		$id = spl_object_id($inputfield);
+		if(isset($this->injected[$id])) return true;
+		$this->injected[$id] = true;
+
+		try {
+			$property = new \ReflectionProperty($inputfield, 'options');
+			// no-op since PHP 8.1, and deprecated as of 8.5
+			if(PHP_VERSION_ID < 80100) $property->setAccessible(true);
+			$options = (array) $property->getValue($inputfield);
+			$property->setValue($inputfield, array_values(array_unique(array_merge($options, $icons))));
+		} catch(\Throwable $e) {
+			$this->error("Could not extend icon list: " . $e->getMessage(), Notice::log);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Hook to InputfieldIcon::render and ::processInput
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookExtendIconInputfield(HookEvent $event) {
+		$this->extendIconInputfield($event->object);
+	}
+
+	/**
+	 * Hook after ProcessTemplate::buildEditForm
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookTemplateEditForm(HookEvent $event) {
+		$template = $event->arguments(0);
+		if(!$template instanceof Template) return;
+		$this->restoreIconValue($event->return, 'pageLabelIcon', $template->getIcon(true));
+	}
+
+	/**
+	 * Hook after ProcessField::buildEditFormBasics
+	 *
+	 * The icon field is added here rather than in buildEditForm(), which takes
+	 * no arguments and would not tell us which field is being edited.
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookFieldEditForm(HookEvent $event) {
+		$field = $event->object->getField();
+		if(!$field instanceof Field) return;
+		$this->restoreIconValue($event->return, 'icon', $field->icon);
+	}
+
+	/**
+	 * Widen an icon inputfield in a built form and restore the value core blanked
+	 *
+	 * @param InputfieldWrapper|mixed $form
+	 * @param string $name
+	 * @param string $value
+	 *
+	 */
+	protected function restoreIconValue($form, $name, $value) {
+
+		if(!$form instanceof InputfieldWrapper) return;
+
+		$inputfield = $form->getChildByName($name);
+		if(!$inputfield instanceof InputfieldIcon) return;
+
+		if(!$this->extendIconInputfield($inputfield)) return;
+
+		$value = (string) $value;
+		if($value === '') return;
+		if($inputfield->attr('value') !== '') return;
+
+		$inputfield->attr('value', $value);
+		$inputfield->icon = $value;
+	}
+
+
+	/*** CONFIG ************************************************************************/
 
 	/**
 	 * Return an InputfieldsWrapper of Inputfields used to configure the class
 	 *
 	 * @param array $data Array of config values indexed by field name
-	 * @return InputfieldsWrapper
+	 * @return InputfieldWrapper
 	 *
 	 */
 	public function getModuleConfigInputfields(array $data) {
 
+		$modules = $this->wire()->modules;
+		$input = $this->wire()->input;
+
+		// Defaults apply only to keys that have never been saved. Testing for an
+		// empty value instead would make every checkbox that defaults to on
+		// impossible to turn off, since an unchecked box posts an empty string
+		// and would be read back as "unconfigured".
 		foreach(self::$configDefaults as $key => $value) {
-			if(!isset($data[$key])||$data[$key]=="") $data[$key] = $value;
+			if(!array_key_exists($key, $data)) $data[$key] = $value;
 		}
 
-		unset($data['cacheClear']);
+		$wrapper = $this->wire(new InputfieldWrapper());
+		$roots = $this->roots();
 
-		$wrapper = new InputFieldWrapper();
+		if($input->post('_rebuildIcons')) {
+			$this->icons(true);
+			$this->message($this->_('Icon cache rebuilt.'));
+		}
 
-		//-------------------------------------------
-		$f = wire('modules')->get("InputfieldSelect");
-		$f->attr('name', 'loadOption');
-		$f->label = "Load Options";
-		$f->attr('value', (isset($data['loadOption']) ? $data['loadOption'] : 0));
-		$f->addOption('webfonts', 'Web Fonts');
-		$f->addOption('svg-framework', 'SVG Framework');
+		// --------------------------------------------------------------------
+		$f = $modules->get('InputfieldMarkup');
+		$f->label = $this->_('Status');
+		$f->icon = 'info-circle';
+		$f->value = $this->renderStatus();
 		$wrapper->add($f);
 
-		//-------------------------------------------
-		$f = wire('modules')->get("InputfieldSelect");
-		$f->attr('name+id', 'loadStyle');
-		$f->label = "Select Font Style";
-		$f->attr('value', (isset($data['loadStyle']) ? $data['loadStyle'] : ''));
-		$f->addOption('regular', 'Regular');
-		$f->addOption('solid', 'Solid');
-		$f->addOption('light', 'Light');
-		$wrapper->add($f);
+		if(empty($roots)) return $wrapper;
 
-		// ------------------------------------------------------------------------
-		// $f = wire('modules')->get('InputfieldCheckbox'); 
-		// $f->attr('name', 'loadBrands');
-		// $f->attr('value', 1);
-		// if($data['loadBrands']) $f->attr('checked', 'checked'); 
-		// $f->label = __('Load Brands Font (optional)'); 
-		// $wrapper->add($f);
+		// --------------------------------------------------------------------
+		if(count($roots) > 1) {
+			$f = $modules->get('InputfieldSelect');
+			$f->attr('name', 'packageDir');
+			$f->label = $this->_('Package');
+			$f->description = $this->_('More than one Font Awesome package was found. Choose which one to use.');
+			$f->icon = 'archive';
+			$f->required = true;
+			foreach($roots as $name => $root) {
+				$label = $name === '' ? $this->_('(top level)') : $name;
+				if($root['version'] !== '') $label .= " — $root[version]";
+				$f->addOption($name, $label);
+			}
+			$f->attr('value', $data['packageDir']);
+			$wrapper->add($f);
+		}
 
+		$styles = $this->styles();
 
-		// ------------------------------------------------------------------------
-		$f = wire('modules')->get('InputfieldCheckbox'); 
-		$f->attr('name', 'removeFA');
-		$f->attr('value', 1);
-		if($data['removeFA']) $f->attr('checked', 'checked'); 
-		$f->label = __('Remove Core Font Awesome (recommended only for custom Admin Themes)'); 
+		// --------------------------------------------------------------------
+		$f = $modules->get('InputfieldSelect');
+		$f->attr('name', 'loadStyle');
+		$f->label = $this->_('Default icon style');
+		$f->description = $this->_('Style used for the admin’s own icons. Everything the core renders — page and template icons, buttons, navigation — is drawn in this style.');
+		$f->icon = 'paint-brush';
+		$f->required = true;
 		$f->columnWidth = 50;
+		foreach($styles as $style) {
+			$f->addOption($style, $this->familyLabel($style));
+		}
+		$f->attr('value', $data['loadStyle']);
 		$wrapper->add($f);
 
-		// ------------------------------------------------------------------------
-		$f = wire('modules')->get('InputfieldCheckbox');
+		// --------------------------------------------------------------------
+		$f = $modules->get('InputfieldAsmSelect');
+		$f->attr('name', 'extraStyles');
+		$f->label = $this->_('Additional styles to load');
+		$f->description = $this->_('Loaded alongside the default, so they can be used in your own markup. Each one adds a webfont to every admin page load.');
+		$f->icon = 'plus-circle';
+		$f->columnWidth = 50;
+		foreach($styles as $style) {
+			$f->addOption($style, $this->familyLabel($style));
+		}
+		$f->attr('value', (array) $data['extraStyles']);
+		$wrapper->add($f);
+
+		// --------------------------------------------------------------------
+		$fieldset = $modules->get('InputfieldFieldset');
+		$fieldset->label = $this->_('Options');
+		$fieldset->icon = 'sliders';
+		$wrapper->add($fieldset);
+
+		$f = $modules->get('InputfieldCheckbox');
+		$f->attr('name', 'loadBrands');
+		$f->attr('value', 1);
+		if($data['loadBrands']) $f->attr('checked', 'checked');
+		$f->label = $this->_('Load brand icons');
+		$f->label2 = $this->_('Load');
+		$f->notes = $this->_('Brand icons (GitHub, Facebook, …) live in their own font and are not part of any style.');
+		$f->columnWidth = 50;
+		$fieldset->add($f);
+
+		$f = $modules->get('InputfieldCheckbox');
+		$f->attr('name', 'loadShims');
+		$f->attr('value', 1);
+		if($data['loadShims']) $f->attr('checked', 'checked');
+		$f->label = $this->_('Load version 4 shims');
+		$f->label2 = $this->_('Load');
+		$f->notes = $this->_('Keeps older icon names working, including the “-o” outline names still used by the core and by third-party modules.');
+		$f->columnWidth = 50;
+		$fieldset->add($f);
+
+		if((int) substr($this->version(), 0, 1) >= 7) {
+			$f = $modules->get('InputfieldCheckbox');
+			$f->attr('name', 'widthCompat');
+			$f->attr('value', 1);
+			if($data['widthCompat']) $f->attr('checked', 'checked');
+			$f->label = $this->_('Compatible icon width');
+			$f->label2 = $this->_('Size icons to the glyph');
+			$f->notes = $this->_('Font Awesome 7 makes every icon a fixed 1.25em wide, where earlier versions sized to the glyph and left `fa-fw` to opt in. Leave this checked to keep the admin’s existing spacing.');
+			$f->columnWidth = 50;
+			$fieldset->add($f);
+		}
+
+		$f = $modules->get('InputfieldCheckbox');
+		$f->attr('name', 'replaceCore');
+		$f->attr('value', 1);
+		if($data['replaceCore']) $f->attr('checked', 'checked');
+		$f->label = $this->_('Replace the core Font Awesome');
+		$f->label2 = $this->_('Replace');
+		$f->notes = $this->_('Unchecked, the core stylesheets still load and are moved ahead of these so the Pro styles win, but the core keeps reporting its own icon version.');
+		$f->columnWidth = 50;
+		$fieldset->add($f);
+
+		$f = $modules->get('InputfieldCheckbox');
 		$f->attr('name', 'disableThis');
 		$f->attr('value', 1);
 		if($data['disableThis']) $f->attr('checked', 'checked');
-		$f->label = __('Disable Loading (instead of uninstall, this prevents Pro from loading.)');
+		$f->label = $this->_('Disable loading');
+		$f->label2 = $this->_('Disable');
+		$f->notes = $this->_('Turns the module off without uninstalling it, restoring the core Font Awesome.');
+		$f->columnWidth = 50;
+		$fieldset->add($f);
+
+		// --------------------------------------------------------------------
+		$f = $modules->get('InputfieldMarkup');
+		$f->label = $this->_('Icon cache');
+		$f->icon = 'refresh';
+		$f->collapsed = Inputfield::collapsedYes;
+		$f->description = sprintf(
+			$this->_('The list of icon names offered by the icon picker is read out of the package’s own stylesheet and cached, because parsing it on every request would be wasteful. The cache is keyed on the package path and the modification time of its `all.css`, so replacing or updating a package rebuilds it automatically — you should not normally need this button. Rebuild by hand if you have edited a stylesheet inside the package in place, or if the picker is offering a list that no longer matches what is installed. Currently caching %d icon names.'),
+			count($this->icons())
+		);
+
+		$b = $modules->get('InputfieldSubmit');
+		$b->attr('name', '_rebuildIcons');
+		$b->attr('value', $this->_('Rebuild icon cache'));
+		$b->icon = 'refresh';
+		$b->setSecondary(true);
+		$f->value = $b->render();
 		$wrapper->add($f);
 
-
 		return $wrapper;
-
-
 	}
 
+	/**
+	 * Human-readable label for a family name
+	 *
+	 * @param string $family
+	 * @return string
+	 *
+	 */
+	protected function familyLabel($family) {
+		$label = ucwords(str_replace('-', ' ', $family));
+		$weight = $this->styleWeight($family);
+		return $weight === '' ? $label : "$label ($weight)";
+	}
 
+	/**
+	 * Render the status panel for the config screen
+	 *
+	 * @return string
+	 *
+	 */
+	protected function renderStatus() {
+
+		$sanitizer = $this->wire()->sanitizer;
+		$roots = $this->roots();
+		$base = $this->basePath();
+
+		if(empty($roots)) {
+			return
+				"<p class='uk-alert uk-alert-warning'>" .
+				sprintf($this->_('No Font Awesome package found. Download the Font Awesome web package and unzip it into %s, so that the css/ and webfonts/ directories sit inside it.'),
+					'<code>' . $sanitizer->entities($base) . '</code>') .
+				'</p>';
+		}
+
+		$root = $this->root();
+		$families = $this->families();
+		$styles = $this->styles();
+		$icons = $this->icons();
+		$edition = $this->isPro() ? 'Pro' : 'Free';
+
+		$rows = array(
+			$this->_('Package') => $sanitizer->entities(rtrim($root['path'], '/')),
+			$this->_('Version') => $sanitizer->entities("Font Awesome $edition " . ($root['version'] ?: '?')),
+			$this->_('Styles')  => count($styles) . ' — ' . $sanitizer->entities(implode(', ', $styles))
+				. (in_array('brands', $families) ? '<br>' . $this->_('plus brands, which is a separate font rather than a style') : ''),
+			$this->_('Icons')   => count($icons)
+				? sprintf($this->_('%d names available to the icon picker'), count($icons))
+				: $this->_('none found — check that css/all.css is present'),
+		);
+
+		if(!$this->isPro()) {
+			$this->warning($this->_('The installed package is Font Awesome Free. The module will work, but there are no Pro-only icons or styles to add.'));
+		}
+
+		$rows += $this->getRuntimeStatus();
+
+		$out = "<table class='uk-table uk-table-small uk-table-divider'>";
+		foreach($rows as $label => $value) {
+			$out .= "<tr><th style='width:12em'>$label</th><td>$value</td></tr>";
+		}
+		$out .= '</table>';
+
+		if(!$this->isGitIgnored()) {
+			$out .=
+				"<p class='uk-alert uk-alert-warning'>" .
+				sprintf($this->_('Nothing in this site’s .gitignore covers %s. Font Awesome Pro is commercially licensed and should not be committed to a repository.'),
+					'<code>' . $sanitizer->entities(self::baseDir) . '/</code>') .
+				'</p>';
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Describe what the module actually did on this request
+	 *
+	 * The config screen is itself an admin request, so by the time it renders,
+	 * this module has already run against it — which makes it the one place
+	 * that can report what really happened rather than what should happen.
+	 *
+	 * @return array Rows for the status table
+	 *
+	 */
+	protected function getRuntimeStatus() {
+
+		$sanitizer = $this->wire()->sanitizer;
+		$config = $this->wire()->config;
+		$rows = array();
+
+		if($this->disableThis) {
+			$rows[$this->_('Loading')] = "<strong>" . $this->_('Disabled in the options below — the core Font Awesome is in use.') . "</strong>";
+			return $rows;
+		}
+
+		// which stylesheets this module queued for this very page
+		$ours = array();
+		foreach($config->styles as $url) {
+			if(strpos($url, '/' . self::baseDir . '/') === false) continue;
+			$ours[] = basename(parse_url($url, PHP_URL_PATH));
+		}
+		$rows[$this->_('Loaded now')] = $ours
+			? $sanitizer->entities(implode(', ', $ours))
+			: "<strong class='uk-text-danger'>" . $this->_('nothing — this module queued no stylesheets for this page') . '</strong>';
+
+		// A style stylesheet is what declares the @font-face and the family name
+		// the icons resolve to; fontawesome.css alone gives codepoints and no font.
+		$style = $this->defaultStyle();
+		if($style === '') {
+			$rows[$this->_('Icon font')] =
+				"<strong class='uk-text-danger'>" .
+				$this->_('no style stylesheet is available — icons will render as empty boxes') .
+				'</strong>';
+		} else {
+			$rows[$this->_('Icon font')] = sprintf(
+				$this->_('%1$s, from %2$s'),
+				$sanitizer->entities($this->fontFamilyName($style) ?: '?'),
+				'<code>' . $sanitizer->entities("css/$style.css") . '</code>');
+			if($style !== $this->loadStyle) {
+				$rows[$this->_('Icon font')] .=
+					"<br><strong class='uk-text-warning'>" .
+					sprintf($this->_('The configured style “%s” is not in this package, so this one was used instead.'),
+						$sanitizer->entities((string) $this->loadStyle)) .
+					'</strong>';
+			}
+		}
+
+		// Core Font Awesome is appended by the admin theme while it renders its
+		// head, which happens after this form is built — so the numbers below
+		// come from the previous admin page view rather than this one.
+		$diag = $this->wire()->session->getFor($this, 'diagnostics');
+
+		if(!is_array($diag)) {
+			$rows[$this->_('Core Font Awesome')] = $this->_('not observed yet — reload this page once');
+		} else if(!$diag['contained']) {
+			$rows[$this->_('Core Font Awesome')] =
+				"<strong class='uk-text-danger'>" .
+				$this->_('$config->styles was replaced by something else after this module — core stylesheets cannot be intercepted') .
+				'</strong>';
+		} else if(!$this->replaceCore) {
+			$rows[$this->_('Core Font Awesome')] = sprintf(
+				$this->_('kept and moved ahead of these — %d stylesheet(s), Replace is off'), $diag['intercepted']);
+		} else {
+			$detail = array();
+			if($diag['intercepted']) $detail[] = sprintf($this->_('%d via $config->styles'), $diag['intercepted']);
+			if($diag['stripped']) $detail[] = sprintf($this->_('%d written straight into the markup'), $diag['stripped']);
+			$rows[$this->_('Core Font Awesome')] = $detail
+				? sprintf($this->_('removed on the last page view — %s'), implode(', ', $detail))
+				: $this->_('none was loaded');
+			if(!empty($diag['remaining'])) {
+				$rows[$this->_('Core Font Awesome')] .=
+					"<br><strong class='uk-text-danger'>" .
+					$this->_('Still referenced by the page, and overriding this package:') .
+					'</strong><br><code>' . $sanitizer->entities(implode('</code><br><code>', $diag['remaining'])) . '</code>';
+			}
+		}
+
+		if(!empty($diag['foreign'])) {
+			$rows[$this->_('Another Font Awesome')] =
+				"<strong class='uk-text-danger'>" .
+				$this->_('Something else is loading its own Font Awesome. If it comes after these stylesheets it will override them, and changing the style here will appear to do nothing:') .
+				'</strong><br><code>' . $sanitizer->entities(implode('</code><br><code>', $diag['foreign'])) . '</code>';
+		}
+
+		$rows[$this->_('ProcessWire')] = $sanitizer->entities($config->version);
+
+		// What the site asked for before this module had its say. A site that
+		// pins this below 6 is telling AdminThemeUikit to load Font Awesome 4.
+		if($this->siteAdminIcons !== null) {
+			$was = isset($this->siteAdminIcons['version']) ? $this->siteAdminIcons['version'] : '';
+			$rows[$this->_('Site icon version')] = $was === ''
+				? $this->_('unset — left to the admin theme')
+				: $sanitizer->entities($was) . ($this->replaceCore ? ' ' . $this->_('(overridden by this module)') : '');
+		}
+
+		$icons = $config->adminIcons;
+		$rows[$this->_('Reported to core')] = is_array($icons) && !empty($icons['version'])
+			? '$config->adminIcons[version] = ' . $sanitizer->entities($icons['version'])
+			: "<strong class='uk-text-danger'>" . $this->_('not set') . '</strong>';
+
+		$adminTheme = $this->wire()->adminTheme;
+		$rows[$this->_('Admin theme')] = $adminTheme ? $sanitizer->entities($adminTheme->className()) : $this->_('none');
+
+		return $rows;
+	}
+
+	/**
+	 * Does a .gitignore appear to cover the Font Awesome directory?
+	 *
+	 * Not a full implementation of gitignore matching — just enough to avoid
+	 * crying wolf. Any rule naming the Font Awesome directory or one of the
+	 * directories containing it counts, since ignoring a parent ignores
+	 * everything beneath it.
+	 *
+	 * @return bool True also when there is no repository to worry about
+	 *
+	 */
+	protected function isGitIgnored() {
+
+		$config = $this->wire()->config;
+
+		$dirs = array(
+			$config->paths->templates,
+			$config->paths->site,
+			$config->paths->root,
+		);
+
+		// directory names that would cover the package if ignored, relative to
+		// the .gitignore being read, deepest first
+		$covering = array(
+			self::baseDir,
+			'templates/' . self::baseDir,
+			'templates',
+			'site/templates/' . self::baseDir,
+			'site/templates',
+			'site',
+		);
+
+		$inRepo = false;
+
+		foreach($dirs as $dir) {
+
+			if(is_dir($dir . '.git')) $inRepo = true;
+
+			$file = $dir . '.gitignore';
+			if(!is_file($file)) continue;
+
+			foreach((array) file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+				$line = trim($line);
+				if($line === '' || strpos($line, '#') === 0 || strpos($line, '!') === 0) continue;
+				$line = trim($line, '/');
+				if(in_array($line, $covering, true)) return true;
+			}
+		}
+
+		// nothing to leak into
+		return !$inRepo;
+	}
 
 }
-
