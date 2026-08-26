@@ -9,8 +9,13 @@ The package lives outside the module, in `/site/templates/FontAwesome/`. Updatin
 Font Awesome and updating this module are separate acts: neither one disturbs the
 other, and a ProcessWire core upgrade touches neither.
 
-Requires ProcessWire 3.0.265 or newer, which is where `$config->adminIcons` was
-introduced.
+Requires ProcessWire 3.0.110 or newer, and PHP 7.4 or newer. Font Awesome Pro is
+licensed separately — you supply your own copy.
+
+On 3.0.265 and newer the module sets `$config->adminIcons`, so the rest of the
+admin agrees with the package you installed. Older versions have no Font Awesome
+6 branch at all and emit version 4 class names, which this package still draws
+correctly.
 
 ## Install
 
