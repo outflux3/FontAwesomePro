@@ -916,13 +916,22 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 
 		$rules[] = implode(', ', $selectors) . " { $declarations }";
 
-		// Font Awesome 4 names the glyph per icon (`.fa-envelope-o::before {
-		// content: "\f003" }`) where Font Awesome 7 reads it from a custom
-		// property. Both selectors carry the same specificity, so a stylesheet
-		// injected at runtime wins on source order alone and the icon renders
-		// its version 4 codepoint against a version 7 font. Restating the
-		// version 7 rule with two elements in front settles it by specificity.
-		$rules[] = $prefix . '.fa::before { content: var(--fa); }';
+		// Font Awesome 4 names the glyph per icon (`.fa-pencil::before { content:
+		// "\f040" }`) where Font Awesome 7 reads it from a custom property. Both
+		// selectors carry the same specificity, so a stylesheet injected at
+		// runtime wins on source order alone and the icon draws its version 4
+		// codepoint against a version 7 font. Around 56 names moved between the
+		// two versions, so the result is a wrong glyph rather than a missing one
+		// — harder to spot, and harder to explain once spotted.
+		//
+		// Every prefix class needs this, not only `.fa`: under version 6
+		// conventions the core emits `fas fa-home` with no `.fa` at all, and the
+		// icon picker builds its tiles the same way.
+		$contentOn = array($prefix . '.fa');
+		foreach(self::$styleClasses as $classes) {
+			foreach($classes as $class) $contentOn[] = $prefix . ".$class";
+		}
+		$rules[] = implode('::before, ', $contentOn) . '::before { content: var(--fa); }';
 
 		$shim = $this->renderShimOverrides($family, $weight);
 		if($shim !== '') $rules[] = $shim;
@@ -1059,6 +1068,13 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		// makes hookable — so widening it here means the value survives.
 		$this->addHookAfter('InputfieldWrapper::new', $this, 'hookNewInputfield');
 
+		// The same for a page field whose inputfield is InputfieldIcon. Field
+		// returns the inputfield carrying only the field's own settings; the
+		// page's stored value is assigned afterwards, by whatever is building
+		// the form — so widening it here is early enough for that value to be
+		// accepted rather than discarded.
+		$this->addHookAfter('Field::getInputfield', $this, 'hookNewInputfield');
+
 		// displaying a stored Pro icon: the value was blanked when the form was
 		// built, before any hookable method ran, so it has to be re-read from
 		// the template or field it came from
@@ -1121,7 +1137,11 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	}
 
 	/**
-	 * Hook after InputfieldWrapper::new
+	 * Hook after InputfieldWrapper::new and Field::getInputfield
+	 *
+	 * Both return a freshly built Inputfield before anything has assigned a
+	 * value to it, which is what makes them useful: widen the options here and
+	 * the assignment that follows is accepted rather than silently discarded.
 	 *
 	 * @param HookEvent $event
 	 *
