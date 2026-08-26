@@ -38,16 +38,6 @@ Nothing else is version-specific. The module reads the version, the available
 styles and the icon list back off the files, so a future Font Awesome release is
 a matter of unzipping it.
 
-## Keep it out of your repository
-
-Font Awesome Pro is commercially licensed. Add this to your site `.gitignore`:
-
-```
-/site/templates/FontAwesome/
-```
-
-The module's config screen warns if it cannot find a `.gitignore` covering it.
-
 ## Configuration
 
 | Setting | Notes |

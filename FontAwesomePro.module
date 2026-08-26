@@ -44,14 +44,14 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title'    => 'Font Awesome Pro',
-			'version'  => 202,
+			'version'  => 203,
 			'summary'  => 'Loads a self-hosted Font Awesome Pro package in the admin, replacing the core Font Awesome and extending the icon picker.',
 			'author'   => 'Macrura',
 			'href'     => 'https://fontawesome.com/',
 			'icon'     => 'font-awesome',
 			'singular' => true,
 			'autoload' => 'template=admin',
-			'requires' => 'ProcessWire>=3.0.265, PHP>=7.4',
+			'requires' => 'ProcessWire>=3.0.110, PHP>=7.4',
 		);
 	}
 
@@ -911,7 +911,18 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 			foreach($classes as $class) $selectors[] = $prefix . ".$class";
 		}
 
-		$declarations = "--fa-family: '$family'; font-family: '$family';";
+		// Brands as a fallback in the stack, not a separate rule per brand name.
+		// ProcessWire decides the prefix from a hardcoded list of brand names —
+		// in JS for the picker, in PHP for wireIconMarkup() — and Font Awesome
+		// has since added brands that neither list knows, so those arrive with
+		// the `fas` prefix and are looked up in a font that has no brand glyphs.
+		// A second family costs nothing and lets the browser fall through
+		// per glyph, which also covers whatever brands a later release adds.
+		$stack = "'$family'";
+		$brands = $this->fontFamilyName('brands');
+		if($this->loadBrands && $brands !== '' && $brands !== $family) $stack .= ", '$brands'";
+
+		$declarations = "--fa-family: '$family'; font-family: $stack;";
 		if($weight !== '') $declarations .= " --fa-style: $weight; font-weight: $weight;";
 
 		$rules[] = implode(', ', $selectors) . " { $declarations }";
@@ -1456,14 +1467,6 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		}
 		$out .= '</table>';
 
-		if(!$this->isGitIgnored()) {
-			$out .=
-				"<p class='uk-alert uk-alert-warning'>" .
-				sprintf($this->_('Nothing in this site’s .gitignore covers %s. Font Awesome Pro is commercially licensed and should not be committed to a repository.'),
-					'<code>' . $sanitizer->entities(self::baseDir) . '/</code>') .
-				'</p>';
-		}
-
 		return $out;
 	}
 
@@ -1601,9 +1604,16 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		}
 
 		$icons = $config->adminIcons;
-		$rows[$this->_('Reported to core')] = is_array($icons) && !empty($icons['version'])
-			? '$config->adminIcons[version] = ' . $sanitizer->entities($icons['version'])
-			: "<strong class='uk-text-danger'>" . $this->_('not set') . '</strong>';
+		if(is_array($icons) && !empty($icons['version'])) {
+			$rows[$this->_('Reported to core')] = '$config->adminIcons[version] = ' . $sanitizer->entities($icons['version']);
+		} else if(version_compare($config->version, '3.0.265', '<')) {
+			// Nothing to report it to: $config->adminIcons arrived in 3.0.265.
+			// This ProcessWire has no version 6 icon branch at all, so it emits
+			// version 4 class names, which this package still draws correctly.
+			$rows[$this->_('Reported to core')] = $this->_('not applicable — this ProcessWire predates $config->adminIcons (3.0.265), so it uses version 4 class names');
+		} else {
+			$rows[$this->_('Reported to core')] = "<strong class='uk-text-danger'>" . $this->_('not set') . '</strong>';
+		}
 
 		$adminTheme = $this->wire()->adminTheme;
 		$rows[$this->_('Admin theme')] = $adminTheme ? $sanitizer->entities($adminTheme->className()) : $this->_('none');
@@ -1660,57 +1670,5 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		return $risk;
 	}
 
-	/**
-	 * Does a .gitignore appear to cover the Font Awesome directory?
-	 *
-	 * Not a full implementation of gitignore matching — just enough to avoid
-	 * crying wolf. Any rule naming the Font Awesome directory or one of the
-	 * directories containing it counts, since ignoring a parent ignores
-	 * everything beneath it.
-	 *
-	 * @return bool True also when there is no repository to worry about
-	 *
-	 */
-	protected function isGitIgnored() {
-
-		$config = $this->wire()->config;
-
-		$dirs = array(
-			$config->paths->templates,
-			$config->paths->site,
-			$config->paths->root,
-		);
-
-		// directory names that would cover the package if ignored, relative to
-		// the .gitignore being read, deepest first
-		$covering = array(
-			self::baseDir,
-			'templates/' . self::baseDir,
-			'templates',
-			'site/templates/' . self::baseDir,
-			'site/templates',
-			'site',
-		);
-
-		$inRepo = false;
-
-		foreach($dirs as $dir) {
-
-			if(is_dir($dir . '.git')) $inRepo = true;
-
-			$file = $dir . '.gitignore';
-			if(!is_file($file)) continue;
-
-			foreach((array) file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-				$line = trim($line);
-				if($line === '' || strpos($line, '#') === 0 || strpos($line, '!') === 0) continue;
-				$line = trim($line, '/');
-				if(in_array($line, $covering, true)) return true;
-			}
-		}
-
-		// nothing to leak into
-		return !$inRepo;
-	}
 
 }
