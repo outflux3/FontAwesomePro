@@ -1,0 +1,18 @@
+.fap-pick { display: flex; align-items: center; gap: .5em; position: relative; flex-wrap: wrap; }
+.fap-pick__preview { display: inline-flex; align-items: center; justify-content: center; min-height: 1.6em; color: #354b60; }
+.fap-pick__input { flex: 1 1 12em; min-width: 8em; }
+.fap-pick__browse { flex: 0 0 auto; cursor: pointer; }
+.fap-pick__warning { margin: .5em 0 0; font-size: .85em; opacity: .75; }
+
+.fap-pick__panel { display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0;
+	margin-top: .35em; padding: .6em; background: #fff; border: 1px solid #d9e1ea;
+	border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.fap-pick--open .fap-pick__panel { display: block; }
+
+.fap-pick__search { width: 100%; margin-bottom: .5em; }
+.fap-pick__status { font-size: .8em; opacity: .7; margin-bottom: .4em; min-height: 1.2em; }
+
+.fap-pick__results { display: flex; flex-wrap: wrap; gap: 2px; max-height: 17em; overflow-y: auto; }
+.fap-pick__icon { width: 2.1em; height: 2.1em; display: inline-flex; align-items: center; justify-content: center;
+	border: 0; background: transparent; cursor: pointer; border-radius: 3px; font-size: 15px; color: #354b60; }
+.fap-pick__icon:hover, .fap-pick__icon:focus { background: #e3eaef; outline: none; }

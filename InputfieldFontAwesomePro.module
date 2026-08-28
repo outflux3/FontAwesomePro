@@ -1,0 +1,206 @@
+<?php namespace ProcessWire;
+
+/**
+ * Font Awesome Pro Icon
+ * ================================================================
+ * Inputfield for picking an icon from the installed Font Awesome package.
+ *
+ * Extends InputfieldText deliberately. The core InputfieldIcon validates an
+ * assigned value against its own bundled list and silently blanks anything it
+ * does not recognise, which is the single behaviour that makes supporting a
+ * larger icon set so awkward — see FontAwesomePro::addIconHooks(). Storing the
+ * icon as plain text has none of that: nothing to validate against, nothing to
+ * discard, and the field can be swapped for any other icon inputfield later
+ * without migrating stored values.
+ *
+ * The icon list is fetched once, on demand, from the JSON URL the main module
+ * publishes. Nothing is embedded in the page: the full list is 94.6KB (21.8KB
+ * gzipped), which is worth a fetch when someone opens the picker and is not
+ * worth carrying on every page that happens to contain an icon field.
+ *
+ * @author Macrura
+ * @copyright Copyright (c) 2017-2026 outflux3
+ * @license MIT License, see LICENSE
+ *
+ * @property int $previewSize
+ *
+ */
+
+class InputfieldFontAwesomePro extends InputfieldText implements InputfieldHasTextValue {
+
+	public static function getModuleInfo() {
+		return array(
+			'title'    => 'Font Awesome Pro Icon',
+			'version'  => 100,
+			'summary'  => 'Pick an icon from the installed Font Awesome package. Stores the icon name as text.',
+			'author'   => 'Macrura',
+			'icon'     => 'font-awesome',
+			'requires' => 'FontAwesomePro',
+		);
+	}
+
+	/**
+	 * Init
+	 *
+	 */
+	public function init() {
+		parent::init();
+		$this->attr('placeholder', 'fa-star');
+		$this->set('previewSize', 24);
+	}
+
+	/**
+	 * Get the main module
+	 *
+	 * @return FontAwesomePro|null
+	 *
+	 */
+	protected function fontAwesome() {
+		$module = $this->wire()->modules->get('FontAwesomePro');
+		return $module instanceof FontAwesomePro ? $module : null;
+	}
+
+	/**
+	 * Normalise a value to the `fa-` prefixed form
+	 *
+	 * Prefixing only — never rejection. An unknown name is kept as typed, so
+	 * that a value from a package that is not currently installed survives a
+	 * round trip through the editor rather than being silently dropped.
+	 *
+	 * @param string $value
+	 * @return string
+	 *
+	 */
+	protected function normalize($value) {
+		$value = trim((string) $value);
+		if($value === '') return '';
+		// tolerate a full class string being pasted in, eg "fas fa-star"
+		if(strpos($value, ' ') !== false) {
+			foreach(explode(' ', $value) as $part) {
+				if(strpos($part, 'fa-') === 0 && strlen($part) > 3) $value = $part;
+			}
+		}
+		if(strpos($value, 'fa-') !== 0) $value = "fa-$value";
+		return $value;
+	}
+
+	/**
+	 * Set attribute
+	 *
+	 * @param array|string $key
+	 * @param array|int|string $value
+	 * @return Inputfield
+	 *
+	 */
+	public function setAttribute($key, $value) {
+		if($key === 'value') $value = $this->normalize($value);
+		return parent::setAttribute($key, $value);
+	}
+
+	/**
+	 * Render ready
+	 *
+	 * @param Inputfield|null $parent
+	 * @param bool $renderValueMode
+	 * @return bool
+	 *
+	 */
+	public function ___renderReady(?Inputfield $parent = null, $renderValueMode = false) {
+
+		$config = $this->wire()->config;
+		$url = $config->urls($this);
+		$version = (int) self::getModuleInfo()['version'];
+
+		$config->styles->add($url . 'InputfieldFontAwesomePro.css?v=' . $version);
+		$config->scripts->add($url . 'InputfieldFontAwesomePro.js?v=' . $version);
+
+		$fa = $this->fontAwesome();
+
+		$config->js('InputfieldFontAwesomePro', array(
+			'url' => $fa ? $fa->iconsUrl() : '',
+			'max' => 240,
+			'labels' => array(
+				'search'  => $this->_('Search icons…'),
+				'none'    => $this->_('No icons match'),
+				'more'    => $this->_('%1$d of %2$d shown — keep typing to narrow'),
+				'clear'   => $this->_('Clear'),
+				'browse'  => $this->_('Browse icons'),
+				'loading' => $this->_('Loading icons…'),
+				'failed'  => $this->_('Could not load the icon list'),
+			),
+		));
+
+		return parent::___renderReady($parent, $renderValueMode);
+	}
+
+	/**
+	 * Render
+	 *
+	 * @return string
+	 *
+	 */
+	public function ___render() {
+
+		$sanitizer = $this->wire()->sanitizer;
+		$value = $this->normalize($this->attr('value'));
+		$size = (int) $this->previewSize;
+
+		$attrs = $this->getAttributes();
+		$attrs['value'] = $value;
+		$attrs['autocomplete'] = 'off';
+		$attrs['class'] = trim((isset($attrs['class']) ? $attrs['class'] : '') . ' fap-pick__input');
+
+		$fa = $this->fontAwesome();
+		$ready = $fa && $fa->iconsUrl() !== '';
+
+		$out =
+			"<div class='fap-pick' data-fap-pick>" .
+				"<span class='fap-pick__preview' data-fap-preview style='font-size:{$size}px;width:" . ($size + 12) . "px'>" .
+					($value === '' ? '' : "<i class='fa " . $sanitizer->entities($value) . "'></i>") .
+				'</span>' .
+				'<input ' . $this->getAttributesString($attrs) . '>' .
+				"<button type='button' class='fap-pick__browse' data-fap-browse>" .
+					$sanitizer->entities($this->_('Browse')) .
+				'</button>' .
+			'</div>';
+
+		if(!$ready) {
+			$out .= "<p class='fap-pick__warning'>" .
+				$this->_('No Font Awesome package was found, so there is nothing to browse. The icon name can still be typed by hand.') .
+				'</p>';
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Render value (non-editable)
+	 *
+	 * @return string
+	 *
+	 */
+	public function ___renderValue() {
+		$value = $this->normalize($this->attr('value'));
+		if($value === '') return '<span class="detail">' . $this->_('none') . '</span>';
+		$value = $this->wire()->sanitizer->entities($value);
+		return "<i class='fa $value'></i> <code>$value</code>";
+	}
+
+	/**
+	 * Config
+	 *
+	 * @return InputfieldWrapper
+	 *
+	 */
+	public function ___getConfigInputfields() {
+		$inputfields = parent::___getConfigInputfields();
+		$f = $this->wire()->modules->get('InputfieldInteger');
+		$f->attr('name', 'previewSize');
+		$f->label = $this->_('Preview size');
+		$f->description = $this->_('Pixel size of the icon shown beside the input.');
+		$f->attr('value', (int) $this->previewSize);
+		$f->inputType = 'number';
+		$inputfields->add($f);
+		return $inputfields;
+	}
+}

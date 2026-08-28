@@ -147,6 +147,35 @@ icon. Rather than fork it, the module merges the Pro list into each instance at
 the points the core makes hookable. Font Awesome Pro 7.3.1 offers 5407 icon names
 where the core's own list has 1895.
 
+## Picking icons in your own fields
+
+The module ships an Inputfield, **Font Awesome Pro Icon**, for choosing an icon
+on a page field, a Deck card, or anywhere else. Set a text field's input type to
+it, or request it directly:
+
+```php
+$f = $modules->get('InputfieldFontAwesomePro');
+$f->attr('name', 'icon');
+$f->attr('value', 'fa-rocket-launch');
+```
+
+It extends `InputfieldText` rather than the core `InputfieldIcon`, which matters
+in two ways: the stored value is plain text with no validation against a fixed
+list, so nothing gets silently discarded; and the field can be swapped for any
+other icon inputfield later without migrating what is stored.
+
+The icon list is fetched once per page, on demand, from a JSON file the module
+writes to `/site/assets/`. Only matches are rendered, so the field adds a few
+hundred bytes to a page rather than the ~193KB of `<option>` elements the core
+picker embeds whether or not anyone opens it.
+
+Any picker — including one you write — can find that list without knowing this
+module exists, because the URL is published on the core's own icon config:
+
+```php
+$config->adminIcons['listUrl'];  // /site/assets/FontAwesomePro/icons.<hash>.json
+```
+
 ## Using Pro icons in your own forms
 
 If your module builds an `InputfieldIcon` itself *and* assigns a Pro-only value,

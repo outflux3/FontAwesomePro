@@ -504,6 +504,45 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	}
 
 	/**
+	 * URL to a JSON file listing every icon name in the active package
+	 *
+	 * Written to /site/assets/ on first use rather than served through a route,
+	 * so it is a plain static file the browser can cache. The name carries a
+	 * hash of the package and its icon count, so a different package produces a
+	 * different URL and stale copies are never served.
+	 *
+	 * The point is that a picker can read this without knowing anything about
+	 * this module — see $config->adminIcons['listUrl'].
+	 *
+	 * @return string Blank if there are no icons to list
+	 *
+	 */
+	public function iconsUrl() {
+
+		$icons = $this->icons();
+		$root = $this->root();
+		if(empty($icons) || !$root) return '';
+
+		$files = $this->wire()->files;
+		$config = $this->wire()->config;
+
+		$hash = substr(md5($root['path'] . '|' . $this->version() . '|' . count($icons)), 0, 12);
+		$name = "icons.$hash.json";
+		$dir = $config->paths->assets . self::baseDir . 'Pro/';
+		$file = $dir . $name;
+
+		if(!is_file($file)) {
+			if(!is_dir($dir) && !$files->mkdir($dir, true)) return '';
+			// drop copies left by earlier packages, so the directory does not
+			// accumulate one file per Font Awesome release ever installed
+			foreach((array) glob($dir . 'icons.*.json') as $old) $files->unlink($old);
+			if(!$files->filePutContents($file, json_encode(array_values($icons)))) return '';
+		}
+
+		return $config->urls->assets . self::baseDir . 'Pro/' . $name;
+	}
+
+	/**
 	 * URL to a stylesheet in the active package, with cache-busting
 	 *
 	 * @param string $name Basename without extension, e.g. 'fontawesome'
@@ -695,6 +734,12 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		if($version === '') return;
 
 		$icons['version'] = $version;
+
+		// A picker can find the icon list from here without knowing this module
+		// exists; the key is additive, so anything reading adminIcons already
+		// keeps working.
+		$url = $this->iconsUrl();
+		if($url !== '') $icons['listUrl'] = $url;
 
 		$config->adminIcons = $icons;
 
