@@ -21,9 +21,12 @@
 		if(icons) return Promise.resolve(icons);
 		if(loading) return loading;
 		var url = config().url;
-		if(!url) return Promise.reject(new Error('no icon list url'));
+		if(!url) return Promise.reject(new Error('no icon list URL in ProcessWire.config.InputfieldFontAwesomePro'));
 		loading = fetch(url, { credentials: 'same-origin' })
-			.then(function(r) { if(!r.ok) throw new Error(r.status); return r.json(); })
+			.then(function(r) {
+				if(!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
+				return r.json();
+			})
 			.then(function(list) { icons = list; return icons; });
 		return loading;
 	}
@@ -127,8 +130,11 @@
 				search.value = '';
 				filter('');
 				search.focus();
-			}).catch(function() {
-				status.textContent = labels.failed || 'Could not load the icon list';
+			}).catch(function(err) {
+				// say which URL and what went wrong: a bare "could not load"
+				// leaves no way to tell a missing config from a 404
+				status.textContent = (labels.failed || 'Could not load the icon list') + ' — ' + err.message;
+				if(window.console) console.error('InputfieldFontAwesomePro:', err);
 			});
 		}
 

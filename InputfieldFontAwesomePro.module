@@ -100,20 +100,20 @@ class InputfieldFontAwesomePro extends InputfieldText implements InputfieldHasTe
 	/**
 	 * Render ready
 	 *
+	 * Note the name: the core's method is `renderReady()`, a plain method, and
+	 * the hookable one is `___renderReadyHook()`. An `___renderReady()` override
+	 * is never called by anything — and it fails quietly, because the core loads
+	 * a module's same-named .js and .css by itself, so the assets still appear
+	 * and only the JS config goes missing.
+	 *
 	 * @param Inputfield|null $parent
 	 * @param bool $renderValueMode
 	 * @return bool
 	 *
 	 */
-	public function ___renderReady(?Inputfield $parent = null, $renderValueMode = false) {
+	public function renderReady(?Inputfield $parent = null, $renderValueMode = false) {
 
 		$config = $this->wire()->config;
-		$url = $config->urls($this);
-		$version = (int) self::getModuleInfo()['version'];
-
-		$config->styles->add($url . 'InputfieldFontAwesomePro.css?v=' . $version);
-		$config->scripts->add($url . 'InputfieldFontAwesomePro.js?v=' . $version);
-
 		$fa = $this->fontAwesome();
 
 		$config->js('InputfieldFontAwesomePro', array(
@@ -130,7 +130,9 @@ class InputfieldFontAwesomePro extends InputfieldText implements InputfieldHasTe
 			),
 		));
 
-		return parent::___renderReady($parent, $renderValueMode);
+		// the core loads InputfieldFontAwesomePro.js and .css from this module's
+		// directory on its own, so there is nothing to queue here
+		return parent::renderReady($parent, $renderValueMode);
 	}
 
 	/**
