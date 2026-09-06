@@ -972,6 +972,24 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 
 		$rules[] = implode(', ', $selectors) . " { $declarations }";
 
+		// The class belonging to the loaded style is left out of the rule above,
+		// since redirecting a style to itself is pointless — but that also left it
+		// without the brands fallback, so `fas fa-aws` drew nothing whenever Solid
+		// was the chosen style. Give those classes their own family plus the
+		// fallback, and nothing else: their weight is already correct.
+		if($stack !== "'$family'") {
+			$loaded = $this->stylesToLoad();
+			foreach(self::$styleClasses as $name => $classes) {
+				if($name === 'brands') continue;
+				if(!in_array($name, $loaded)) continue;
+				$own = $this->fontFamilyName($name);
+				if($own === '') continue;
+				$ownSelectors = array();
+				foreach($classes as $class) $ownSelectors[] = $prefix . ".$class";
+				$rules[] = implode(', ', $ownSelectors) . " { font-family: '$own', '$brands'; }";
+			}
+		}
+
 		// Font Awesome 4 names the glyph per icon (`.fa-pencil::before { content:
 		// "\f040" }`) where Font Awesome 7 reads it from a custom property. Both
 		// selectors carry the same specificity, so a stylesheet injected at
