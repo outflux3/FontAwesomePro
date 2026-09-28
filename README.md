@@ -59,6 +59,11 @@ put the files. But until you move them you have no Pro icons.
 2. Refresh modules and open the module config. The **Status** panel should report
    the version it found.
 
+Settings from the old version are tidied automatically on upgrade: `loadOption`
+and `removeFA` no longer mean anything and are dropped, while `loadStyle` and
+`disableThis` carry the same meaning and are kept. There is no need to uninstall
+and delete the module first.
+
 Two things worth knowing if you had Pro-only icons selected on templates or
 fields under the old version:
 

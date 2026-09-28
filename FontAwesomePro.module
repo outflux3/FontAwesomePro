@@ -44,7 +44,7 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title'    => 'Font Awesome Pro',
-			'version'  => 205,
+			'version'  => 206,
 			'summary'  => 'Loads a self-hosted Font Awesome Pro package in the admin, replacing the core Font Awesome and extending the icon picker.',
 			'author'   => 'Marc W. | @Macrura (community), @outflux3 (Github), https://nibiri.com',
 			'href'     => 'https://processwire.com/talk/topic/17312-font-awesome-pro-for-processwire/',
@@ -172,6 +172,56 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 		foreach(self::$configDefaults as $key => $value) {
 			$this->set($key, $value);
 		}
+	}
+
+
+	/**
+	 * Drop config left by the pre-2026 module
+	 *
+	 * ProcessWire calls this when the stored version changes, which makes an
+	 * in-place upgrade as clean as a fresh install — no need to uninstall,
+	 * delete and reinstall just to be rid of settings that no longer mean
+	 * anything.
+	 *
+	 * Only genuinely dead keys are removed. `loadStyle` and `disableThis` carry
+	 * the same meaning as before and are left alone; the old `loadStyle` values
+	 * (solid, regular, light) are all still valid style names, and an invalid
+	 * one falls back through defaultStyle() anyway.
+	 *
+	 * `removeFA` is deliberately not migrated to `replaceCore`. It defaulted to
+	 * off only because the old removal was a string replace over the whole
+	 * rendered page and could not be trusted; replacing the core stylesheets is
+	 * now the right default, so the new default should win.
+	 *
+	 * @param int|string $fromVersion
+	 * @param int|string $toVersion
+	 *
+	 */
+	public function ___upgrade($fromVersion, $toVersion) {
+
+		$modules = $this->wire()->modules;
+
+		// loadOption chose between web fonts and the SVG framework, which this
+		// module no longer supports; cacheClear was never a real setting
+		$dead = array('loadOption', 'removeFA', 'cacheClear');
+
+		$data = $modules->getConfig($this);
+		$dropped = array();
+
+		foreach($dead as $key) {
+			if(!array_key_exists($key, $data)) continue;
+			unset($data[$key]);
+			$dropped[] = $key;
+		}
+
+		if(empty($dropped)) return;
+
+		$modules->saveConfig($this, $data);
+
+		$this->message(sprintf(
+			$this->_('Font Awesome Pro: removed settings that no longer apply (%s). Check the module config — the font package now lives in /site/templates/FontAwesome/.'),
+			implode(', ', $dropped)
+		));
 	}
 
 
