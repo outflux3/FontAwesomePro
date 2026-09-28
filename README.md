@@ -43,6 +43,32 @@ Nothing else is version-specific. The module reads the version, the available
 styles and the icon list back off the files, so a future Font Awesome release is
 a matter of unzipping it.
 
+## Upgrading from the 2018 version
+
+The font package moved. It used to live in a `vendor/` folder inside the module;
+it now lives in `/site/templates/FontAwesome/`, so that updating the module and
+updating Font Awesome stop interfering with each other.
+
+Nothing breaks if you skip this — with no package found the module does nothing
+at all, the core Font Awesome loads as usual, and the config screen says where to
+put the files. But until you move them you have no Pro icons.
+
+1. Move your licensed package to `/site/templates/FontAwesome/`, so `css/` and
+   `webfonts/` sit directly inside. The old `vendor/` folder is no longer read
+   and can go.
+2. Refresh modules and open the module config. The **Status** panel should report
+   the version it found.
+
+Two things worth knowing if you had Pro-only icons selected on templates or
+fields under the old version:
+
+- The bundled fork of the core `InputfieldIcon` is gone. Icon names are merged
+  into the core picker instead, which needs a package installed to merge from.
+- Until one is, the core picker does not recognise a Pro-only name, shows the
+  setting as blank, and **writes that blank back when the template or field is
+  next saved** — for any reason, not just an icon change. The Status panel lists
+  anything in that position under **Icon picker**, so check there before saving.
+
 ## Configuration
 
 | Setting | Notes |
