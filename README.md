@@ -43,6 +43,12 @@ Nothing else is version-specific. The module reads the version, the available
 styles and the icon list back off the files, so a future Font Awesome release is
 a matter of unzipping it.
 
+A **Kit** download works the same way, and is detected the same way. Kits are
+subset builds, so the icon count will be lower than the full package's, and some
+carry no release banner in `css/fontawesome.css` — the version and the Pro/Free
+edition are then read from `all.css` and from the font family the style
+stylesheets declare instead.
+
 ## Upgrading from the 2018 version
 
 The font package moved. It used to live in a `vendor/` folder inside the module;

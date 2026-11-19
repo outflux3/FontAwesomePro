@@ -44,7 +44,7 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	public static function getModuleInfo() {
 		return array(
 			'title'    => 'Font Awesome Pro',
-			'version'  => 206,
+			'version'  => 207,
 			'summary'  => 'Loads a self-hosted Font Awesome Pro package in the admin, replacing the core Font Awesome and extending the icon picker.',
 			'author'   => 'Marc W. | @Macrura (community), @outflux3 (Github), https://nibiri.com',
 			'href'     => 'https://processwire.com/talk/topic/17312-font-awesome-pro-for-processwire/',
@@ -104,6 +104,38 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	);
 
 	/**
+	 * Stylesheets worth reading the release banner out of, in order
+	 *
+	 * The web package opens every one of its files with the banner, but a Kit
+	 * download does not: css/fontawesome.css can begin straight with the rules
+	 * and the banner turn up only later, inside all.css. So the search covers
+	 * several files and is not limited to the head of them.
+	 *
+	 * @var array
+	 *
+	 */
+	protected static $bannerCss = array(
+		'fontawesome.css', 'all.css', 'fontawesome.min.css', 'all.min.css',
+	);
+
+	/**
+	 * Styles that exist only in Font Awesome Pro
+	 *
+	 * Free ships solid, regular and brands and nothing else, so any one of
+	 * these being present settles the edition on its own.
+	 *
+	 * @var array
+	 *
+	 */
+	protected static $proOnlyStyles = array(
+		'light', 'thin',
+		'duotone', 'duotone-regular', 'duotone-light', 'duotone-thin',
+		'sharp-solid', 'sharp-regular', 'sharp-light', 'sharp-thin',
+		'sharp-duotone-solid', 'sharp-duotone-regular',
+		'sharp-duotone-light', 'sharp-duotone-thin',
+	);
+
+	/**
 	 * Data as used by the get/set functions
 	 *
 	 */
@@ -142,6 +174,8 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	private $familiesCache = null;
 	private $iconsCache = null;
 	private $familyNameCache = array();
+	private $familyCache = array();
+	private $proCache = null;
 
 	/**
 	 * Count of core Font Awesome <link> tags removed from rendered markup
@@ -349,19 +383,105 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	 */
 	protected function readVersion($path, $name = '') {
 
-		$file = $path . 'css/fontawesome.css';
-		$head = is_file($file) ? (string) file_get_contents($file, false, null, 0, 512) : '';
-
-		if(preg_match('/Font\s+Awesome\s+(?:Pro|Free)?\s*(\d+\.\d+(?:\.\d+)?)/i', $head, $m)) {
-			return $m[1];
-		}
+		$version = $this->readBanner($path);
+		if($version !== '') return $version;
 
 		// fall back to a version-looking fragment of the directory name
 		if($name !== '' && preg_match('/(\d+\.\d+(?:\.\d+)?)/', $name, $m)) {
 			return $m[1];
 		}
 
+		// last resort, the major out of the family name: 'Font Awesome 7 Pro'
+		// gives 7. Coarse — a package swap inside one major no longer changes
+		// the cache-busting string — but a major is enough for every version
+		// test the module makes, where a blank version silently disables the
+		// Font Awesome 7 branches and stops the core being told anything at
+		// all. See applyAdminIcons().
+		$family = $this->readFamily($path);
+		if($family !== '' && preg_match('/(\d+)/', $family, $m)) return $m[1];
+
 		return '';
+	}
+
+	/**
+	 * Read the release version out of a package's banner comments
+	 *
+	 * Head of each candidate first, since that is where the web package puts
+	 * it and reading 4KB is free, then the whole of each as the fallback a Kit
+	 * download needs.
+	 *
+	 * The pattern insists on at least major.minor, which is what keeps the
+	 * `'Font Awesome 7 Pro'` of a family declaration from being read as a
+	 * release number.
+	 *
+	 * @param string $path Package root path
+	 * @return string Version, or blank
+	 *
+	 */
+	protected function readBanner($path) {
+
+		$re = '/Font\s+Awesome\s+(?:Pro|Free)?\s*(\d+\.\d+(?:\.\d+)?)/i';
+		$files = array();
+
+		foreach(self::$bannerCss as $base) {
+			$file = $path . 'css/' . $base;
+			if(!is_file($file)) continue;
+			$files[] = $file;
+			$head = (string) file_get_contents($file, false, null, 0, 4096);
+			if(preg_match($re, $head, $m)) return $m[1];
+		}
+
+		// no head carried it, so read them out in full. These are around 250KB
+		// each, which is worth avoiding, but this runs once per package per
+		// request and only where the cheap pass already came back empty.
+		foreach($files as $file) {
+			if(filesize($file) > 4194304) continue;
+			if(preg_match($re, (string) file_get_contents($file), $m)) return $m[1];
+		}
+
+		return '';
+	}
+
+	/**
+	 * Read a Pro/Free-bearing font family name out of a package
+	 *
+	 * Taken from a style stylesheet rather than a banner comment, because the
+	 * family name is what every @font-face and icon rule actually resolves
+	 * against: a package missing it would not draw at all, where a package
+	 * missing its comments draws perfectly well. That makes it the one edition
+	 * signal that cannot go absent from a working install.
+	 *
+	 * Brands is not consulted — 'Font Awesome 7 Brands' names neither edition.
+	 *
+	 * @param string $path Package root path
+	 * @return string eg 'Font Awesome 7 Pro', or blank
+	 *
+	 */
+	protected function readFamily($path) {
+
+		if(isset($this->familyCache[$path])) return $this->familyCache[$path];
+
+		$family = '';
+
+		// the style stylesheets are a few hundred bytes and declare the family
+		// in the :root block at the top. all.css declares it too, but 240KB in,
+		// so it is not worth reading here.
+		foreach(array('solid', 'regular', 'light', 'thin', 'duotone', 'sharp-solid') as $style) {
+			foreach(array("$style.css", "$style.min.css") as $base) {
+				$file = $path . 'css/' . $base;
+				if(!is_file($file)) continue;
+				$css = (string) file_get_contents($file, false, null, 0, 8192);
+				if(!preg_match_all('/--fa-(?:style-)?family-[a-z-]+\s*:\s*[\'"]([^\'"]+)[\'"]/i', $css, $m)) continue;
+				foreach($m[1] as $name) {
+					if(preg_match('/\b(?:Pro|Free)\b/i', $name)) {
+						$family = $name;
+						break 3;
+					}
+				}
+			}
+		}
+
+		return $this->familyCache[$path] = $family;
 	}
 
 	/**
@@ -378,14 +498,40 @@ class FontAwesomePro extends WireData implements Module, ConfigurableModule {
 	/**
 	 * Is the active package Font Awesome Pro (rather than Free)?
 	 *
+	 * Three signals, cheapest and most reliable first: the font family name a
+	 * style stylesheet declares, then the presence of a Pro-only style, then
+	 * the release banner. See readFamily() for why a comment is the weakest of
+	 * the three.
+	 *
 	 * @return bool
 	 *
 	 */
 	public function isPro() {
+
+		if($this->proCache !== null) return $this->proCache;
+
 		$root = $this->root();
-		if(!$root) return false;
-		$head = (string) file_get_contents($root['path'] . 'css/fontawesome.css', false, null, 0, 512);
-		return stripos($head, 'Font Awesome Pro') !== false;
+		if(!$root) return $this->proCache = false;
+
+		// the family name the icons actually resolve against. A Kit download
+		// can ship without the banner comment this used to read, which had a
+		// licensed Pro package reporting itself as Free.
+		$family = $this->readFamily($root['path']);
+		if($family !== '') return $this->proCache = (stripos($family, 'Pro') !== false);
+
+		// a style Free does not ship settles it without reading anything
+		if(array_intersect($this->styles(), self::$proOnlyStyles)) return $this->proCache = true;
+
+		// and failing both, the banner, wherever in the package it turns up
+		foreach(self::$bannerCss as $base) {
+			$file = $root['path'] . 'css/' . $base;
+			if(!is_file($file) || filesize($file) > 4194304) continue;
+			if(stripos((string) file_get_contents($file), 'Font Awesome Pro') !== false) {
+				return $this->proCache = true;
+			}
+		}
+
+		return $this->proCache = false;
 	}
 
 	/**
